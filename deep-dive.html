@@ -1,0 +1,1161 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Every merge, broken down — threat model, 13 layers, rubric</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧬</text></svg>">
+<style>
+ :root{--bg:#fbfbfd;--fg:#1b1b1f;--muted:#5f6069;--line:#e4e4ea;--card:#fff;--accent:#1f5fd0;--add:#1f7a3a;--del:#b3261e;--addbg:rgba(31,122,58,.10);--delbg:rgba(179,38,30,.09);--low:#1f7a3a;--med:#9a6a00;--high:#b3261e;--mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+ @media (prefers-color-scheme:dark){:root{--bg:#111216;--fg:#e9e9ee;--muted:#9aa0ac;--line:#262830;--card:#191b21;--accent:#7aa2ff;--add:#6cc68a;--del:#ff8a80;--addbg:rgba(108,198,138,.12);--delbg:rgba(255,138,128,.12);--low:#6cc68a;--med:#e0b45e;--high:#ff8a80}}
+ *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+ main{max-width:900px;margin:0 auto;padding:36px 20px 80px}
+ h1{font-size:28px;margin:0 0 6px;letter-spacing:-.5px} h2{font-size:21px;margin:40px 0 10px} h3{font-size:19px;margin:34px 0 6px;border-top:2px solid var(--line);padding-top:22px}
+ h4{margin:10px 0 6px;font-size:16.5px} a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+ .lede{color:var(--muted);font-size:17px;margin:0 0 18px}
+ .lc{font:600 12px/1 var(--mono);color:var(--muted);float:right;margin-top:6px}
+ .panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:14px 0}
+ .barrow{display:flex;align-items:center;gap:10px;margin:5px 0;font-size:13px} .blab{width:230px;color:var(--muted);flex:none}
+ .btrack{flex:1;height:14px;background:color-mix(in srgb,var(--accent) 9%,transparent);border-radius:7px;overflow:hidden}
+ .bfill{display:block;height:100%;background:var(--accent);border-radius:7px} .bval{width:24px;text-align:right;font:600 12px var(--mono)}
+ .pr{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:14px 0}
+ .prhead{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start}
+ .prtitle{font:600 15px var(--mono)} .meta{color:var(--muted);font-size:12px;margin-top:3px}
+ .chips{display:flex;gap:6px;flex-wrap:wrap} .chip{font:600 11px/1 var(--mono);padding:5px 9px;border-radius:20px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+ .chip.layer{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,var(--line))}
+ .chip.risk.low{color:var(--low)} .chip.risk.med{color:var(--med)} .chip.risk.high{color:var(--high);border-color:color-mix(in srgb,var(--high) 45%,var(--line))}
+ .chip.feat{color:var(--muted)}
+ .cls,.threat{font-size:14px;margin:4px 0} .threat{color:var(--fg)} .plain{font-size:14.5px;margin:8px 0}
+ code{font:12.5px var(--mono);background:color-mix(in srgb,var(--accent) 10%,transparent);padding:1px 5px;border-radius:5px}
+ .difftitle{font:600 11.5px var(--mono);color:var(--muted);margin:10px 0 0;padding:6px 10px;background:color-mix(in srgb,var(--accent) 7%,transparent);border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0}
+ pre.diff{margin:0;padding:10px 12px;background:var(--card);border:1px solid var(--line);border-radius:0 0 8px 8px;overflow-x:auto;font:12px/1.5 var(--mono);white-space:pre}
+ pre.diff span{display:block} .diff .add{background:var(--addbg);color:var(--add)} .diff .del{background:var(--delbg);color:var(--del)} .diff .ctx{color:var(--muted)}
+ .meters{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px} .mtitle{font:600 12px var(--mono);color:var(--muted);margin-bottom:6px}
+ .mrow{display:flex;align-items:center;gap:10px;margin:3px 0;font-size:12.5px} .mlab{width:96px;color:var(--muted);flex:none}
+ .mtrack{flex:1;height:9px;background:color-mix(in srgb,var(--accent) 9%,transparent);border-radius:5px;overflow:hidden} .mfill{display:block;height:100%;background:var(--accent)} .mval{width:14px;text-align:right;font:600 11px var(--mono)}
+ .muted{color:var(--muted)} footer{margin-top:44px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:13px}
+ svg text{font-family:-apple-system,sans-serif}
+</style></head><body><main>
+ <p style="font-size:13px"><a href="./">&larr; Back to the summary portfolio</a></p>
+ <h1>Every merge, broken down</h1>
+ <p class="lede">All 35 merged fixes, each placed in a threat model and the 13-layer ML stack, scored on the risk rubric, with the <b>real diff</b>. Pulled live from GitHub — every card links to the public PR.</p>
+
+ <h2>How the rubric works</h2>
+ <div class="panel">
+  <p style="margin:2px 0 10px;font-size:14.5px">Each finding scores four factors from 1&ndash;5. Two make <b>likelihood</b>, two make <b>impact</b>. <b>Risk = likelihood &times; impact</b>, out of 25 (NIST SP 800-30 / OWASP shape).</p>
+  <div class="barrow"><span class="blab"><b>Exposure</b> — who can reach it</span><span class="btrack"></span><span class="bval muted">L</span></div>
+  <div class="barrow"><span class="blab"><b>Ease</b> — how hard to trigger</span><span class="btrack"></span><span class="bval muted">L</span></div>
+  <div class="barrow"><span class="blab"><b>Attacker gain</b> — what success gives</span><span class="btrack"></span><span class="bval muted">I</span></div>
+  <div class="barrow"><span class="blab"><b>Blast radius</b> — how far it spreads</span><span class="btrack"></span><span class="bval muted">I</span></div>
+  <p class="muted" style="font-size:13px;margin-top:8px">Most ML-integrity bugs here score Low: trusted usage, and the payoff is a quietly wrong number rather than attacker control. That is the honest reading — and exactly why they are dangerous, because nothing crashes. The authorization and memory-safety fixes score higher.</p>
+ </div>
+
+ <h2>Where the 35 fixes land in the stack</h2>
+ <div class="panel"><svg viewBox="0 0 560 396" width="100%" role="img" aria-label="13-layer stack with merged-PR counts"><rect x="0" y="6" width="560" height="26" rx="6" fill="rgba(31,95,208,0.45)" stroke="var(--line)"/><text x="12" y="23" font-size="12.5" fill="var(--fg)" font-weight="600">L1 · Mathematics</text><text x="548" y="23" font-size="12" fill="var(--fg)" text-anchor="end" font-family="monospace">6 PRs</text><rect x="0" y="36" width="560" height="26" rx="6" fill="var(--card)" stroke="var(--line)"/><text x="12" y="53" font-size="12.5" fill="var(--muted)" font-weight="400">L2 · Learning theory</text><text x="548" y="53" font-size="12" fill="var(--muted)" text-anchor="end" font-family="monospace"></text><rect x="0" y="66" width="560" height="26" rx="6" fill="rgba(31,95,208,0.29)" stroke="var(--line)"/><text x="12" y="83" font-size="12.5" fill="var(--fg)" font-weight="600">L3 · Data</text><text x="548" y="83" font-size="12" fill="var(--fg)" text-anchor="end" font-family="monospace">3 PRs</text><rect x="0" y="96" width="560" height="26" rx="6" fill="rgba(31,95,208,0.67)" stroke="var(--line)"/><text x="12" y="113" font-size="12.5" fill="var(--fg)" font-weight="600">L4 · Architecture</text><text x="548" y="113" font-size="12" fill="var(--fg)" text-anchor="end" font-family="monospace">10 PRs</text><rect x="0" y="126" width="560" height="26" rx="6" fill="rgba(31,95,208,0.34)" stroke="var(--line)"/><text x="12" y="143" font-size="12.5" fill="var(--fg)" font-weight="600">L5 · Training</text><text x="548" y="143" font-size="12" fill="var(--fg)" text-anchor="end" font-family="monospace">4 PRs</text><rect x="0" y="156" width="560" height="26" rx="6" fill="var(--card)" stroke="var(--line)"/><text x="12" y="173" font-size="12.5" fill="var(--muted)" font-weight="400">L6 · Framework</text><text x="548" y="173" font-size="12" fill="var(--muted)" text-anchor="end" font-family="monospace"></text><rect x="0" y="186" width="560" height="26" rx="6" fill="var(--card)" stroke="var(--line)"/><text x="12" y="203" font-size="12.5" fill="var(--muted)" font-weight="400">L7 · Kernels</text><text x="548" y="203" font-size="12" fill="var(--muted)" text-anchor="end" font-family="monospace"></text><rect x="0" y="216" width="560" height="26" rx="6" fill="var(--card)" stroke="var(--line)"/><text x="12" y="233" font-size="12.5" fill="var(--muted)" font-weight="400">L8 · Hardware</text><text x="548" y="233" font-size="12" fill="var(--muted)" text-anchor="end" font-family="monospace"></text><rect x="0" y="246" width="560" height="26" rx="6" fill="rgba(31,95,208,0.23)" stroke="var(--line)"/><text x="12" y="263" font-size="12.5" fill="var(--fg)" font-weight="600">L9 · Inference / serving</text><text x="548" y="263" font-size="12" fill="var(--fg)" text-anchor="end" font-family="monospace">2 PRs</text><rect x="0" y="276" width="560" height="26" rx="6" fill="rgba(31,95,208,0.17)" stroke="var(--line)"/><text x="12" y="293" font-size="12.5" fill="var(--fg)" font-weight="600">L10 · Systems around model</text><text x="548" y="293" font-size="12" fill="var(--fg)" text-anchor="end" font-family="monospace">1 PR</text><rect x="0" y="306" width="560" height="26" rx="6" fill="var(--card)" stroke="var(--line)"/><text x="12" y="323" font-size="12.5" fill="var(--muted)" font-weight="400">L11 · Evaluation</text><text x="548" y="323" font-size="12" fill="var(--muted)" text-anchor="end" font-family="monospace"></text><rect x="0" y="336" width="560" height="26" rx="6" fill="rgba(31,95,208,0.51)" stroke="var(--line)"/><text x="12" y="353" font-size="12.5" fill="var(--fg)" font-weight="600">L12 · Security & integrity</text><text x="548" y="353" font-size="12" fill="var(--fg)" text-anchor="end" font-family="monospace">7 PRs</text><rect x="0" y="366" width="560" height="26" rx="6" fill="rgba(31,95,208,0.23)" stroke="var(--line)"/><text x="12" y="383" font-size="12.5" fill="var(--fg)" font-weight="600">L13 · Deployment & org</text><text x="548" y="383" font-size="12" fill="var(--fg)" text-anchor="end" font-family="monospace">2 PRs</text></svg></div>
+ <div class="panel"><div class="mtitle" style="margin-bottom:8px">Merged PRs per layer</div><div class="barrow"><span class="blab">L4 Architecture</span><span class="btrack"><span class="bfill" style="width:100%"></span></span><span class="bval">10</span></div><div class="barrow"><span class="blab">L12 Security &amp; integrity</span><span class="btrack"><span class="bfill" style="width:70%"></span></span><span class="bval">7</span></div><div class="barrow"><span class="blab">L1 Mathematics</span><span class="btrack"><span class="bfill" style="width:60%"></span></span><span class="bval">6</span></div><div class="barrow"><span class="blab">L5 Training</span><span class="btrack"><span class="bfill" style="width:40%"></span></span><span class="bval">4</span></div><div class="barrow"><span class="blab">L3 Data</span><span class="btrack"><span class="bfill" style="width:30%"></span></span><span class="bval">3</span></div><div class="barrow"><span class="blab">L9 Inference/serving</span><span class="btrack"><span class="bfill" style="width:20%"></span></span><span class="bval">2</span></div><div class="barrow"><span class="blab">L13 Deployment &amp; org</span><span class="btrack"><span class="bfill" style="width:20%"></span></span><span class="bval">2</span></div><div class="barrow"><span class="blab">L10 Systems around model</span><span class="btrack"><span class="bfill" style="width:10%"></span></span><span class="bval">1</span></div></div>
+ <p class="muted" style="font-size:13.5px">Bug classes across the set: dtype loss (4), feature (4), unchecked allocation (2), correctness (2), shared mutable state (2), buffer not registered (2), state desync on error path (1), authorization boundary (1), preprocessing inconsistency (1), in-place op breaks backward (1), batch cross-contamination (1), validation gap (1), export dtype (1), use-after-free + double-free (1), memory leak + NULL deref (1), coordinate grid dtype/exactness (1), histogram bin-center dtype (1), training-mode crash + dtype leak (1), stale cache (1), off-by-fraction coordinate grid (1), dtype/device follow (1), geometry (1), non-finite gradient at singular point (1), state not moved with module (1), ignored per-neuron param + wrong reset (1).</p>
+
+ <h2>The 35, layer by layer</h2>
+ <section class="layer"><h3 id="layer-4">Layer 4 — Architecture <span class="lc">10 merged</span></h3><article class="pr" id="pr-2848">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/huggingface/pytorch-image-models/pull/2848">huggingface/pytorch-image-models <b>#2848</b></a>
+      <div class="meta">+14/&minus;1 · 2 files · merged 2026-10-11</div></div>
+    <div class="chips"><span class="chip layer">L4 Architecture</span><span class="chip risk med">Medium · 10.5/25</span></div>
+  </div>
+  <h4>Fix GCViT global query mixing images within a batch</h4>
+  <p class="cls"><b>Class:</b> batch cross-contamination (info flow)</p>
+  <p class="threat"><b>Threat model:</b> A global-query attention mixed features across images within a batch, so one sample&#x27;s output depends on its batchmates.</p>
+  <p class="plain">GCViT's global query mixed information <em>between images in the same batch</em>: a prediction depended on whatever else was batched with it. A batch-invariance violation — same input, different output depending on neighbours — both a correctness and an information-flow bug.</p>
+  <div class="difftitle">tests/test_models.py</div><pre class="diff"><span class="ctx">         assert not torch.allclose(pooled_avg, expected)</span>
+<span class="ctx"> </span>
+<span class="ctx"> </span>
+<span class="add">+</span>
+<span class="add">+@pytest.mark.base</span>
+<span class="add">+def test_gcvit_batch_consistency():</span>
+<span class="add">+    # each image&#x27;s global query must reach only that image&#x27;s windows: batched output == per-image output</span>
+<span class="add">+    torch.manual_seed(0)</span>
+<span class="add">+    model = create_model(&#x27;gcvit_xxtiny&#x27;, pretrained=False).eval()</span>
+<span class="add">+    x = torch.randn(3, 3, 224, 224)</span>
+<span class="add">+    with torch.no_grad():</span>
+<span class="add">+        batched = model(x)</span>
+<span class="add">+        single = torch.cat([model(x[i:i + 1]) for i in range(x.shape[0])])</span>
+<span class="add">+    torch.testing.assert_close(batched, single, rtol=1e-4, atol=1e-4)</span>
+<span class="add">+</span>
+<span class="ctx"> @pytest.mark.base</span>
+<span class="ctx"> @pytest.mark.parametrize(</span>
+<span class="ctx">     &#x27;model_name&#x27;,</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:80%"></span></span><span class="mval">4</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div></div>
+</article><article class="pr" id="pr-9104">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/Project-MONAI/MONAI/pull/9104">Project-MONAI/MONAI <b>#9104</b></a>
+      <div class="meta">+32/&minus;1 · 2 files · merged 2026-10-13</div></div>
+    <div class="chips"><span class="chip layer">L4 Architecture</span><span class="chip risk med">Medium · 6.0/25</span></div>
+  </div>
+  <h4>fix(networks): AffineHead follows the module&#x27;s dtype, not just device</h4>
+  <p class="cls"><b>Class:</b> dtype/device follow</p>
+  <p class="threat"><b>Threat model:</b> A network head follows device but not dtype, so autocast produces wrong-dtype activations.</p>
+  <p class="plain"><code>AffineHead</code> followed the module device but not its dtype. Made it follow dtype too, so it behaves under autocast.</p>
+  <div class="difftitle">tests/networks/nets/test_globalnet.py</div><pre class="diff"><span class="ctx">         test_data = torch.randn(input_shape)</span>
+<span class="ctx">         test_script_save(net, test_data)</span>
+<span class="ctx"> </span>
+<span class="add">+    @parameterized.expand(TEST_CASES_GLOBAL_NET)</span>
+<span class="add">+    def test_half_precision_forward(self, input_param, input_shape, expected_shape):</span>
+<span class="add">+        &quot;&quot;&quot;Check that a GlobalNet cast to half precision can run a forward pass and returns float16.</span>
+<span class="add">+</span>
+<span class="add">+        `AffineHead.grid` used to be moved by device only, so casting the network left it at float32 while theta</span>
+<span class="add">+        became float16, and the einsum in `affine_transform` raised `RuntimeError: expected scalar type Half but</span>
+<span class="add">+        found Float` on the first half-precision forward call.</span>
+<span class="add">+</span>
+<span class="add">+        Args:</span>
+<span class="add">+            input_param: keyword arguments used to build the GlobalNet.</span>
+<span class="add">+            input_shape: shape of the random float16 input.</span>
+<span class="add">+            expected_shape: shape the returned displacement field must have.</span>
+<span class="add">+        &quot;&quot;&quot;</span>
+<span class="add">+        net = GlobalNet(**input_param).half()</span>
+<span class="add">+        with eval_mode(net):</span>
+<span class="add">+            img = torch.randn(input_shape, dtype=torch.float16)</span>
+<span class="add">+            result = net(img)</span>
+<span class="add">+            self.assertEqual(result.dtype, torch.float16)</span>
+<span class="add">+            self.assertEqual(result.shape, expected_shape)</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:80%"></span></span><span class="mval">4</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-4337">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/kornia/kornia/pull/4337">kornia/kornia <b>#4337</b></a>
+      <div class="meta">+82/&minus;2 · 5 files · merged 2026-09-07</div></div>
+    <div class="chips"><span class="chip layer">L4 Architecture</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>fix(augmentation): register fill_value/sigma as buffers, not plain attrs</h4>
+  <p class="cls"><b>Class:</b> buffer not registered</p>
+  <p class="threat"><b>Threat model:</b> fill_value/sigma as plain attrs are not moved/cast by .to(), breaking device/dtype moves.</p>
+  <p class="plain">Augmentation <code>fill_value</code>/<code>sigma</code> were plain attributes, not buffers, so module <code>.to()</code> silently skipped them. Registered as buffers.</p>
+  <div class="difftitle">tests/augmentation/test_random_generator.py</div><pre class="diff"><span class="ctx">         assert res.keys() == expected.keys(), res.keys()</span>
+<span class="ctx">         assert_close(res[&quot;mix_pairs&quot;], expected[&quot;mix_pairs&quot;], rtol=1e-4, atol=1e-4)</span>
+<span class="ctx">         assert_close(res[&quot;crop_src&quot;], expected[&quot;crop_src&quot;], rtol=1e-4, atol=1e-4)</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+class TestGaussianBlurGenBufferHygiene:</span>
+<span class="add">+    # `sigma` used to be a plain attribute when passed as a Tensor -- invisible to</span>
+<span class="add">+    # state_dict() and to Module.to()/.half()/.cuda() (make_samplers compensated with</span>
+<span class="add">+    # its own inline `.to()`, so this was never a crash risk, just missing buffer</span>
+<span class="add">+    # hygiene). A plain (min, max) tuple of Python floats has no device/dtype and stays</span>
+<span class="add">+    # a plain attribute, which is correct.</span>
+<span class="add">+    def test_tensor_sigma_is_a_registered_buffer(self, device, dtype):</span>
+<span class="add">+        gen = RandomGaussianBlurGenerator(sigma=torch.tensor([0.1, 2.0]))</span>
+<span class="add">+        # persistent=False -&gt; visible via named_buffers() but excluded from</span>
+<span class="add">+        # state_dict(), as in the buffer fixes #4079 and #4319 (keeps checkpoint</span>
+<span class="add">+        # keys unchanged); not every kornia buffer is non-persistent.</span>
+<span class="add">+        assert &quot;sigma&quot; in dict(gen.named_buffers())</span>
+<span class="add">+        assert &quot;sigma&quot; not in gen.state_dict()</span>
+<span class="add">+</span>
+<span class="add">+        # RandomGeneratorBase.to() is a special-cased override (see its own &quot;TODO:</span>
+<span class="add">+        # refine the logic with module.to()&quot;) that only rebuilds sigma_sampler via</span>
+<span class="add">+        # make_samplers() -- it never calls nn.Module.to(), so calling it directly on</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-4319">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/kornia/kornia/pull/4319">kornia/kornia <b>#4319</b></a>
+      <div class="meta">+82/&minus;3 · 3 files · merged 2026-09-07</div></div>
+    <div class="chips"><span class="chip layer">L4 Architecture</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>fix(feature): register RenderingDeFMO&#x27;s times as a buffer so .to() moves it</h4>
+  <p class="cls"><b>Class:</b> buffer not registered (.to skips)</p>
+  <p class="threat"><b>Threat model:</b> A tensor stored as a plain attribute is not moved by .to(device), so GPU inference reads a CPU tensor.</p>
+  <p class="plain"><code>RenderingDeFMO</code> kept its <code>times</code> tensor as a plain attribute, so <code>.to(device)</code> did not move it — a device-mismatch crash or silent CPU fallback. Registered it as a buffer.</p>
+  <div class="difftitle">tests/feature/test_defmo.py</div><pre class="diff"><span class="ctx"> import torch</span>
+<span class="ctx"> </span>
+<span class="ctx"> from kornia.feature import DeFMO</span>
+<span class="add">+from kornia.feature.defmo import RenderingDeFMO</span>
+<span class="ctx"> </span>
+<span class="ctx"> from testing.base import BaseTester</span>
+<span class="ctx"> </span>
+<span class="ctx"> </span>
+<span class="add">+class TestRenderingDeFMOTimesBuffer(BaseTester):</span>
+<span class="add">+    &quot;&quot;&quot;`times` must be a real buffer so `.to()` moves it, and `forward` must not rebind it.</span>
+<span class="add">+</span>
+<span class="add">+    Same bug shape as #4069/#4079 (SIFTDescriptor.gk et al.) in a different class: `times`</span>
+<span class="add">+    was a plain Python attribute, invisible to `Module.to()`/`.half()`, and `forward`</span>
+<span class="add">+    compensated by re-deriving its DEVICE (but never its dtype) from the input on every</span>
+<span class="add">+    call -- so `.half()` a module and calling it crashed with a dtype-mismatch RuntimeError.</span>
+<span class="add">+    &quot;&quot;&quot;</span>
+<span class="add">+</span>
+<span class="add">+    def test_to_moves_times(self, device):</span>
+<span class="add">+        # float16 rather than the default float32, or the dtype assertion would hold</span>
+<span class="add">+        # vacuously; float16 also works on MPS, where float64 is unavailable.</span>
+<span class="add">+        mod = RenderingDeFMO().to(device, torch.float16)</span>
+<span class="add">+        assert mod.times.dtype == torch.float16</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-743">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/fangwei123456/spikingjelly/pull/743">fangwei123456/spikingjelly <b>#743</b></a>
+      <div class="meta">+75/&minus;0 · 4 files · merged 2026-09-03</div></div>
+    <div class="chips"><span class="chip layer">L4 Architecture</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>Move tensor reset values with the module in MemoryModule._apply</h4>
+  <p class="cls"><b>Class:</b> state not moved with module</p>
+  <p class="threat"><b>Threat model:</b> A stateful neuron&#x27;s reset values were not moved by _apply, so .to() left them on the wrong device/dtype.</p>
+  <p class="plain"><code>MemoryModule._apply</code> did not move the neuron's reset values with the module, so <code>.to()</code> desynced state from parameters. Moved them too.</p>
+  <div class="difftitle">test/activation_based/test_memory.py</div><pre class="diff"><span class="ctx">         functional_forward((torch.tensor(1.0),), (torch.tensor(3.0),))</span>
+<span class="ctx"> </span>
+<span class="ctx">     torch.testing.assert_close(module.state, torch.tensor(7.0))</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+def test_apply_moves_tensor_reset_values_dtype():</span>
+<span class="add">+    &quot;&quot;&quot;.half()/.double() must move tensor reset values too, so a later</span>
+<span class="add">+    reset() restores the state in the module&#x27;s current dtype rather than</span>
+<span class="add">+    the dtype the reset value had when it was registered.&quot;&quot;&quot;</span>
+<span class="add">+</span>
+<span class="add">+    class Node(base.MemoryModule):</span>
+<span class="add">+        def __init__(self):</span>
+<span class="add">+            super().__init__()</span>
+<span class="add">+            self.register_memory(&quot;s&quot;, torch.zeros(4))</span>
+<span class="add">+</span>
+<span class="add">+        def single_step_forward(self, x):</span>
+<span class="add">+            self.s = self.s + x</span>
+<span class="add">+            return self.s</span>
+<span class="add">+</span>
+<span class="add">+    net = Node().double()</span>
+<span class="add">+    net.reset()</span>
+<span class="add">+    assert net.s.dtype == torch.float64</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-441">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/jeshraghian/snntorch/pull/441">jeshraghian/snntorch <b>#441</b></a>
+      <div class="meta">+84/&minus;9 · 3 files · merged 2026-09-20</div></div>
+    <div class="chips"><span class="chip layer">L4 Architecture</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>Fix LeakyParallel silently ignoring a per-neuron beta; correct the reset=zero formula in Leaky</h4>
+  <p class="cls"><b>Class:</b> ignored per-neuron param + wrong reset</p>
+  <p class="threat"><b>Threat model:</b> LeakyParallel silently ignored a per-neuron beta tensor and used a wrong reset=zero formula.</p>
+  <p class="plain"><code>LeakyParallel</code> silently ignored a per-neuron <code>beta</code> (length hidden_size) and had an incorrect reset=zero update. Fixed both — a silent wrong-result bug in a core neuron.</p>
+  <div class="difftitle">tests/test_snntorch/test_leakyparallel.py</div><pre class="diff"><span class="add">+#!/usr/bin/env python</span>
+<span class="add">+</span>
+<span class="add">+&quot;&quot;&quot;Tests for LeakyParallel neuron.&quot;&quot;&quot;</span>
+<span class="add">+</span>
+<span class="add">+import pytest</span>
+<span class="add">+import snntorch as snn</span>
+<span class="add">+import torch</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+class TestLeakyParallel:</span>
+<span class="add">+    def test_leakyparallel_scalar_beta_sets_diagonal(self):</span>
+<span class="add">+        lp = snn.LeakyParallel(input_size=4, hidden_size=6, beta=0.42)</span>
+<span class="add">+        diag = torch.diagonal(lp.rnn.weight_hh_l0.detach())</span>
+<span class="add">+        assert torch.allclose(diag, torch.full((6,), 0.42), atol=1e-6)</span>
+<span class="add">+</span>
+<span class="add">+    def test_leakyparallel_per_neuron_beta_sets_diagonal(self):</span>
+<span class="add">+        &quot;&quot;&quot;Regression: a per-neuron ``beta`` (length == hidden_size) must be</span>
+<span class="add">+        written to the diagonal of ``weight_hh_l0``. It was previously</span>
+<span class="add">+        dropped silently -- the length check was unreachable -- so the</span>
+<span class="add">+        layer kept the RNN&#x27;s random recurrent init.&quot;&quot;&quot;</span>
+<span class="add">+        beta = torch.linspace(0.1, 0.9, 6)</span>
+<span class="add">+        lp = snn.LeakyParallel(input_size=4, hidden_size=6, beta=beta)</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-455">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/jeshraghian/snntorch/pull/455">jeshraghian/snntorch <b>#455</b></a>
+      <div class="meta">+484/&minus;1 · 5 files · merged 2026-09-20</div></div>
+    <div class="chips"><span class="chip layer">L4 Architecture</span><span class="chip risk low">Low · 1.0/25</span><span class="chip feat">feature</span></div>
+  </div>
+  <h4>Add neuron_from_equations(): generate a custom neuron class from state equations</h4>
+  <p class="cls"><b>Class:</b> feature: neuron from equations</p>
+  <p class="threat"><b>Threat model:</b> (Feature addition: generate a neuron class from state equations.)</p>
+  <p class="plain">Added <code>neuron_from_equations()</code>: generate a custom neuron class from symbolic state equations. Feature addition.</p>
+  <div class="difftitle">snntorch/_neurons/customneuron.py</div><pre class="diff"><span class="add">+import torch</span>
+<span class="add">+</span>
+<span class="add">+from .neurons import SpikingNeuron</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+__all__ = [&quot;CustomNeuron&quot;, &quot;neuron_from_equations&quot;]</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+class CustomNeuron(SpikingNeuron):</span>
+<span class="add">+    &quot;&quot;&quot;</span>
+<span class="add">+    Base class for a neuron generated by :func:`neuron_from_equations`. Not</span>
+<span class="add">+    normally instantiated directly -- call :func:`neuron_from_equations` to</span>
+<span class="add">+    build a subclass from your own state equations, then use the returned</span>
+<span class="add">+    class exactly like any other snnTorch neuron.</span>
+<span class="add">+    &quot;&quot;&quot;</span>
+<span class="add">+</span>
+<span class="add">+    #: names of the state variables this neuron carries, e.g. ``(&quot;mem&quot;,)``</span>
+<span class="add">+    #: or ``(&quot;v&quot;, &quot;u&quot;)``. Set by :func:`neuron_from_equations`.</span>
+<span class="add">+    state_names: tuple = ()</span>
+<span class="add">+    #: which state variable is compared against ``threshold`` to fire.</span>
+<span class="add">+    #: Defaults to ``state_names[0]``.</span>
+<span class="add">+    spike_state = None</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div></div>
+</article><article class="pr" id="pr-454">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/jeshraghian/snntorch/pull/454">jeshraghian/snntorch <b>#454</b></a>
+      <div class="meta">+281/&minus;3 · 3 files · merged 2026-09-25</div></div>
+    <div class="chips"><span class="chip layer">L4 Architecture</span><span class="chip risk low">Low · 1.0/25</span><span class="chip feat">feature</span></div>
+  </div>
+  <h4>Add homeostasis: adaptive, time-varying threshold on SpikingNeuron</h4>
+  <p class="cls"><b>Class:</b> feature: homeostasis</p>
+  <p class="threat"><b>Threat model:</b> (Feature addition: adaptive, time-varying threshold.)</p>
+  <p class="plain">Added homeostasis: an adaptive, time-varying threshold on <code>SpikingNeuron</code>. Feature addition.</p>
+  <div class="difftitle">tests/test_snntorch/test_homeostasis.py</div><pre class="diff"><span class="add">+#!/usr/bin/env python</span>
+<span class="add">+</span>
+<span class="add">+&quot;&quot;&quot;Tests for the homeostatic (adaptive, time-varying) threshold, added to</span>
+<span class="add">+SpikingNeuron and inherited by every neuron model (issue #37).&quot;&quot;&quot;</span>
+<span class="add">+</span>
+<span class="add">+import math</span>
+<span class="add">+</span>
+<span class="add">+import pytest</span>
+<span class="add">+import snntorch as snn</span>
+<span class="add">+import torch</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+class TestHomeostasis:</span>
+<span class="add">+    # ---------------------------------------------------------------- #</span>
+<span class="add">+    #  disabled by default -&gt; zero regression</span>
+<span class="add">+    # ---------------------------------------------------------------- #</span>
+<span class="add">+    def test_disabled_by_default(self):</span>
+<span class="add">+        lif = snn.Leaky(beta=0.9)</span>
+<span class="add">+        assert lif._homeostasis_enabled is False</span>
+<span class="add">+</span>
+<span class="add">+    def test_matches_stock_behaviour_when_disabled(self):</span>
+<span class="add">+        torch.manual_seed(0)</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div></div>
+</article><article class="pr" id="pr-453">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/jeshraghian/snntorch/pull/453">jeshraghian/snntorch <b>#453</b></a>
+      <div class="meta">+471/&minus;0 · 5 files · merged 2026-09-20</div></div>
+    <div class="chips"><span class="chip layer">L4 Architecture</span><span class="chip risk low">Low · 1.0/25</span><span class="chip feat">feature</span></div>
+  </div>
+  <h4>Add SynapticDelay: per-channel axonal/synaptic delay with a learnable delay time</h4>
+  <p class="cls"><b>Class:</b> feature: synaptic delay</p>
+  <p class="threat"><b>Threat model:</b> (Feature addition: per-channel learnable axonal/synaptic delay.)</p>
+  <p class="plain">Added <code>SynapticDelay</code>: per-channel axonal/synaptic delay with a learnable delay time. Capability accepted into the core — shows design range.</p>
+  <div class="difftitle">snntorch/_neurons/synapticdelay.py</div><pre class="diff"><span class="add">+import torch</span>
+<span class="add">+import torch.nn as nn</span>
+<span class="add">+import torch.nn.functional as F</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+__all__ = [&quot;SynapticDelay&quot;]</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+class SynapticDelay(nn.Module):</span>
+<span class="add">+    &quot;&quot;&quot;</span>
+<span class="add">+    Per-channel (axonal / synaptic) transmission delay for spike or current</span>
+<span class="add">+    signals, with an optionally **learnable** delay time.</span>
+<span class="add">+</span>
+<span class="add">+    A spike or current on channel :math:`c` is delayed by :math:`d_c \\ge 0`</span>
+<span class="add">+    time steps before it is passed on. ``SynapticDelay`` is a plain</span>
+<span class="add">+    ``nn.Module`` that is dropped into a network wherever a lag is wanted,</span>
+<span class="add">+    typically between a connection and a neuron::</span>
+<span class="add">+</span>
+<span class="add">+        self.fc1   = nn.Linear(num_in, num_hidden)</span>
+<span class="add">+        self.delay = snn.SynapticDelay(max_delay=16, delay=1.0,</span>
+<span class="add">+                                       channels=num_hidden, learn_delay=True)</span>
+<span class="add">+        self.lif1  = snn.Leaky(beta=0.9)</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div></div>
+</article><article class="pr" id="pr-750">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/fangwei123456/spikingjelly/pull/750">fangwei123456/spikingjelly <b>#750</b></a>
+      <div class="meta">+480/&minus;0 · 9 files · merged 2026-09-06</div></div>
+    <div class="chips"><span class="chip layer">L4 Architecture</span><span class="chip risk low">Low · 1.0/25</span><span class="chip feat">feature</span></div>
+  </div>
+  <h4>Add RAFNode: resonate-and-fire neuron</h4>
+  <p class="cls"><b>Class:</b> feature: resonate-and-fire neuron</p>
+  <p class="threat"><b>Threat model:</b> (Feature addition: resonate-and-fire neuron model.)</p>
+  <p class="plain">Added <code>RAFNode</code>: a resonate-and-fire neuron. Feature accepted into the core.</p>
+  <div class="difftitle">spikingjelly/activation_based/neuron/resonate.py</div><pre class="diff"><span class="add">+from typing import Optional</span>
+<span class="add">+</span>
+<span class="add">+import torch</span>
+<span class="add">+</span>
+<span class="add">+from .. import functional, surrogate</span>
+<span class="add">+from .base_node import BaseNode</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+__all__ = [&quot;RAFNode&quot;]</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+class RAFNode(BaseNode):</span>
+<span class="add">+    def __init__(</span>
+<span class="add">+        self,</span>
+<span class="add">+        b: float = -0.2,</span>
+<span class="add">+        omega: float = 1.0,</span>
+<span class="add">+        dt: float = 1.0,</span>
+<span class="add">+        v_threshold: float = 1.0,</span>
+<span class="add">+        v_reset: Optional[float] = 0.0,</span>
+<span class="add">+        surrogate_function: surrogate.SurrogateFunctionBase = surrogate.Sigmoid(),</span>
+<span class="add">+        detach_reset: bool = False,</span>
+<span class="add">+        step_mode: str = &quot;s&quot;,</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:20%"></span></span><span class="mval">1</span></div></div>
+</article></section><section class="layer"><h3 id="layer-12">Layer 12 — Security &amp; integrity <span class="lc">7 merged</span></h3><article class="pr" id="pr-7365">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/woodpecker-ci/woodpecker/pull/7365">woodpecker-ci/woodpecker <b>#7365</b></a>
+      <div class="meta">+37/&minus;4 · 4 files · merged 2026-10-23</div></div>
+    <div class="chips"><span class="chip layer">L12 Security &amp; integrity</span><span class="chip risk med">Medium · 10.0/25</span></div>
+  </div>
+  <h4>Harden store scoping for org-level secret and registry retrieval</h4>
+  <p class="cls"><b>Class:</b> authorization boundary</p>
+  <p class="threat"><b>Threat model:</b> A secret query matched org membership on org_id alone; a repo with OrgID 0 would match every repo-scoped secret.</p>
+  <p class="plain">Org-level secret/registry queries scoped on <code>org_id</code> without checking <code>repo_id = 0</code>. For a repo with OrgID 0 the clause matches every repo-scoped secret. Stated precisely: not exploitable on a normally-run instance, shipped as a defensive fix with isolation tests.</p>
+  <div class="difftitle">server/store/datastore/registry_test.go</div><pre class="diff"><span class="ctx"> 	assert.Len(t, list, 2)</span>
+<span class="ctx"> }</span>
+<span class="ctx"> </span>
+<span class="add">+func TestRegistryListOrgZeroIsolation(t *testing.T) {</span>
+<span class="add">+	store, closer := newTestStore(t, new(model.Registry))</span>
+<span class="add">+	defer closer()</span>
+<span class="add">+</span>
+<span class="add">+	assert.NoError(t, store.RegistryCreate(&amp;model.Registry{</span>
+<span class="add">+		RepoID:   1,</span>
+<span class="add">+		OrgID:    0,</span>
+<span class="add">+		Address:  &quot;victim-registry.example.com&quot;,</span>
+<span class="add">+		Username: &quot;foo&quot;,</span>
+<span class="add">+		Password: &quot;top-secret-password&quot;,</span>
+<span class="add">+	}))</span>
+<span class="add">+</span>
+<span class="add">+	list, err := store.RegistryList(&amp;model.Repo{ID: 2, OrgID: 0}, true, &amp;model.ListOptionsWithAll{ListOptions: &amp;model.ListOptions{Page: 1, PerPage: 50}})</span>
+<span class="add">+	assert.NoError(t, err)</span>
+<span class="add">+	assert.Empty(t, list, &quot;repo 2 (OrgID 0) must not see repo 1&#x27;s repo-scoped registry just because both have OrgID 0&quot;)</span>
+<span class="add">+}</span>
+<span class="add">+</span>
+<span class="ctx"> func TestRegistryUpdate(t *testing.T) {</span>
+<span class="ctx"> 	store, closer := newTestStore(t, new(model.Registry))</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:80%"></span></span><span class="mval">4</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:80%"></span></span><span class="mval">4</span></div></div>
+</article><article class="pr" id="pr-941">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/miniupnp/miniupnp/pull/941">miniupnp/miniupnp <b>#941</b></a>
+      <div class="meta">+21/&minus;3 · 1 files · merged 2026-11-02</div></div>
+    <div class="chips"><span class="chip layer">L12 Security &amp; integrity</span><span class="chip risk med">Medium · 9.0/25</span></div>
+  </div>
+  <h4>netfilter_nft: keep the netlink socket in sync when a rule-cache refresh errors</h4>
+  <p class="cls"><b>Class:</b> state desync on error path</p>
+  <p class="threat"><b>Threat model:</b> A failed rule-cache refresh left the netlink socket out of sync, so later ops act on stale kernel state.</p>
+  <p class="plain">When an nftables rule-cache refresh errored, the netlink socket was left inconsistent, so later rule operations desynced from the kernel. Kept the socket in sync on the error path.</p>
+  <div class="difftitle">miniupnpd/netfilter_nft/nftnlrdr_misc.c</div><pre class="diff"><span class="ctx"> 				strcmp(chain, nft_forward_chain) == 0) {</span>
+<span class="ctx"> 				r-&gt;table = strdup(nftnl_rule_get_str(rule, NFTNL_RULE_TABLE));</span>
+<span class="ctx"> 				r-&gt;chain = strdup(chain);</span>
+<span class="add">+				if (r-&gt;table == NULL || r-&gt;chain == NULL) {</span>
+<span class="add">+					syslog(LOG_ERR, &quot;%s: strdup() failed&quot;, &quot;table_cb&quot;);</span>
+<span class="add">+					free(r-&gt;table);</span>
+<span class="add">+					free(r-&gt;chain);</span>
+<span class="add">+					free(r);</span>
+<span class="add">+					nftnl_rule_free(rule);</span>
+<span class="add">+					CB_DATA(alloc_failed) = 1;</span>
+<span class="add">+					return MNL_CB_OK;</span>
+<span class="add">+				}</span>
+<span class="ctx"> 				r-&gt;family = nftnl_rule_get_u32(rule, NFTNL_RULE_FAMILY);</span>
+<span class="ctx"> 				if (nftnl_rule_is_set(rule, NFTNL_RULE_USERDATA)) {</span>
+<span class="ctx"> 					const char *descr;</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div></div>
+</article><article class="pr" id="pr-922">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/miniupnp/miniupnp/pull/922">miniupnp/miniupnp <b>#922</b></a>
+      <div class="meta">+78/&minus;0 · 2 files · merged 2026-10-31</div></div>
+    <div class="chips"><span class="chip layer">L12 Security &amp; integrity</span><span class="chip risk med">Medium · 9.0/25</span></div>
+  </div>
+  <h4>miniupnpd/netfilter: check calloc() results in iptables rule builders</h4>
+  <p class="cls"><b>Class:</b> unchecked allocation (NULL deref)</p>
+  <p class="threat"><b>Threat model:</b> calloc() results used without a NULL check in netfilter rule builders reachable from LAN UPnP requests.</p>
+  <p class="plain">Nine <code>calloc()</code> sites in the daemon's iptables rule construction used the result without checking NULL. Under memory pressure a request crashes the daemon. Hardened all sites.</p>
+  <div class="difftitle">miniupnpd/netfilter/iptcrdr.c</div><pre class="diff"><span class="ctx"> 	e-&gt;nfcache = NFC_UNKNOWN;</span>
+<span class="ctx"> #endif</span>
+<span class="ctx"> 	target = get_dnat_target(iaddr, iport);</span>
+<span class="add">+	if(!match || !target) {</span>
+<span class="add">+		syslog(LOG_ERR, &quot;%s: failed to build match/target&quot;, &quot;addnatrule&quot;);</span>
+<span class="add">+		free(match);</span>
+<span class="add">+		free(target);</span>
+<span class="add">+		free(e);</span>
+<span class="add">+		return -1;</span>
+<span class="add">+	}</span>
+<span class="ctx"> #ifdef NFC_IP_DST_PT</span>
+<span class="ctx"> 	e-&gt;nfcache |= NFC_IP_DST_PT;</span>
+<span class="ctx"> #endif</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div></div>
+</article><article class="pr" id="pr-6358">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/cfengine/core/pull/6358">cfengine/core <b>#6358</b></a>
+      <div class="meta">+1/&minus;0 · 1 files · merged 2026-09-24</div></div>
+    <div class="chips"><span class="chip layer">L12 Security &amp; integrity</span><span class="chip risk med">Medium · 8.8/25</span></div>
+  </div>
+  <h4>Fix use-after-free and double-free in RemoveFilament</h4>
+  <p class="cls"><b>Class:</b> use-after-free + double-free</p>
+  <p class="threat"><b>Threat model:</b> A code path frees an object then, lacking an early return, reads and frees it again.</p>
+  <p class="plain">Memory corruption in a config engine core. A missing <code>return</code> after a free let execution fall into a read of the freed pointer (use-after-free), then free it again (double-free). One-line fix, backported to two release branches.</p>
+  <div class="difftitle">libpromises/dbm_test_api.c</div><pre class="diff"><span class="ctx">     {</span>
+<span class="ctx">         StringSetDestroy(filament-&gt;items);</span>
+<span class="ctx">         free(filament);</span>
+<span class="add">+        return;</span>
+<span class="ctx">     }</span>
+<span class="ctx"> </span>
+<span class="ctx">     DBHandle *db;</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:80%"></span></span><span class="mval">4</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div></div>
+</article><article class="pr" id="pr-942">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/miniupnp/miniupnp/pull/942">miniupnp/miniupnp <b>#942</b></a>
+      <div class="meta">+5/&minus;0 · 1 files · merged 2026-11-02</div></div>
+    <div class="chips"><span class="chip layer">L12 Security &amp; integrity</span><span class="chip risk med">Medium · 6.2/25</span></div>
+  </div>
+  <h4>upnphttp: check malloc() when sending the 100 Continue response</h4>
+  <p class="cls"><b>Class:</b> unchecked allocation (NULL deref)</p>
+  <p class="threat"><b>Threat model:</b> malloc() unchecked while building the HTTP 100-Continue response to an untrusted client.</p>
+  <p class="plain">The HTTP server allocated the 100-Continue response buffer without checking <code>malloc()</code>. A NULL dereference on allocation failure. Checked and handled.</p>
+  <div class="difftitle">miniupnpd/upnphttp.c</div><pre class="diff"><span class="ctx"> 		/* Sending the 100 Continue response */</span>
+<span class="ctx"> 		if(!h-&gt;res_buf) {</span>
+<span class="ctx"> 			h-&gt;res_buf = malloc(256);</span>
+<span class="add">+			if(!h-&gt;res_buf) {</span>
+<span class="add">+				syslog(LOG_ERR, &quot;malloc error in ProcessHTTPPOST_upnphttp()&quot;);</span>
+<span class="add">+				Send500(h);</span>
+<span class="add">+				return;</span>
+<span class="add">+			}</span>
+<span class="ctx"> 			h-&gt;res_buf_alloclen = 256;</span>
+<span class="ctx"> 		}</span>
+<span class="ctx"> 		h-&gt;res_buflen = snprintf(h-&gt;res_buf, h-&gt;res_buf_alloclen,</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-923">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/miniupnp/miniupnp/pull/923">miniupnp/miniupnp <b>#923</b></a>
+      <div class="meta">+127/&minus;16 · 2 files · merged 2026-11-02</div></div>
+    <div class="chips"><span class="chip layer">L12 Security &amp; integrity</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>miniupnpd/netfilter: create DNAT rules with the kernel&#x27;s highest revision (fixes #837)</h4>
+  <p class="cls"><b>Class:</b> correctness: kernel API revision</p>
+  <p class="threat"><b>Threat model:</b> DNAT rules built with a fixed revision can silently mismatch the running kernel.</p>
+  <p class="plain">Port-mapping DNAT rules used a hardcoded netfilter revision; newer kernels expect the highest supported. A robustness fix so mappings install reliably (fixes #837).</p>
+  <div class="difftitle">miniupnpd/netfilter/iptcrdr.c</div><pre class="diff"><span class="ctx">            const char * iaddr, unsigned short iport,</span>
+<span class="ctx">            const char * rhost, unsigned short rport);</span>
+<span class="ctx"> </span>
+<span class="add">+/* iptables &gt;= 1.8.8 only registers the highest DNAT revision the kernel</span>
+<span class="add">+ * supports, so a revision 0 rule is listed as &quot;DNAT [unsupported revision]&quot;</span>
+<span class="add">+ * on Linux &gt;= 4.18. Create DNAT rules with that same revision. (#837) */</span>
+<span class="add">+static int dnat_revision = -1;</span>
+<span class="add">+</span>
+<span class="add">+static int</span>
+<span class="add">+get_dnat_revision(void)</span>
+<span class="add">+{</span>
+<span class="add">+#ifdef ENABLE_DNAT_REVISION2</span>
+<span class="add">+	struct xt_get_revision rev;</span>
+<span class="add">+	socklen_t len = sizeof(rev);</span>
+<span class="add">+	int s;</span>
+<span class="add">+#endif</span>
+<span class="add">+</span>
+<span class="add">+	if(dnat_revision &gt;= 0)</span>
+<span class="add">+		return dnat_revision;</span>
+<span class="add">+	dnat_revision = 0;</span>
+<span class="add">+#ifdef ENABLE_DNAT_REVISION2</span>
+<span class="add">+	s = socket(PF_INET, SOCK_RAW, IPPROTO_RAW);</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-925">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/miniupnp/miniupnp/pull/925">miniupnp/miniupnp <b>#925</b></a>
+      <div class="meta">+18/&minus;4 · 1 files · merged 2026-10-31</div></div>
+    <div class="chips"><span class="chip layer">L12 Security &amp; integrity</span><span class="chip risk low">Low · 4.0/25</span></div>
+  </div>
+  <h4>miniupnpd/nftables: keep the remote host of IPv4 port mappings</h4>
+  <p class="cls"><b>Class:</b> correctness: dropped field</p>
+  <p class="threat"><b>Threat model:</b> The remote host of an IPv4 port mapping was dropped, widening a scoped mapping.</p>
+  <p class="plain">nftables IPv4 port mappings silently discarded the remote-host restriction, widening a mapping meant to be host-scoped. Preserved the remote host.</p>
+  <div class="difftitle">miniupnpd/netfilter_nft/nftnlrdr.c</div><pre class="diff"><span class="ctx"> 		if (p-&gt;proto == proto &amp;&amp;</span>
+<span class="ctx"> 		    p-&gt;dport == eport) {</span>
+<span class="ctx"> </span>
+<span class="add">+			if (rhost != NULL &amp;&amp; rhostlen &gt; 0) {</span>
+<span class="add">+				if (p-&gt;saddr) {</span>
+<span class="add">+					addr.s_addr = p-&gt;saddr;</span>
+<span class="add">+					if (inet_ntop(AF_INET, &amp;addr, rhost, rhostlen) == NULL) {</span>
+<span class="add">+						syslog(LOG_ERR, &quot;%s: inet_ntop: %m&quot;,</span>
+<span class="add">+						       &quot;get_nat_redirect_rule&quot;);</span>
+<span class="add">+						rhost[0] = &#x27;\0&#x27;;</span>
+<span class="add">+					}</span>
+<span class="add">+				} else {</span>
+<span class="add">+					rhost[0] = &#x27;\0&#x27;;</span>
+<span class="add">+				}</span>
+<span class="add">+			}</span>
+<span class="add">+</span>
+<span class="ctx"> 			if (p-&gt;nat_addr &amp;&amp; iaddr) {</span>
+<span class="ctx"> 				addr.s_addr = p-&gt;nat_addr;</span>
+<span class="ctx"> 				if (inet_ntop(AF_INET, &amp;addr, iaddr, iaddrlen) == NULL) {</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article></section><section class="layer"><h3 id="layer-1">Layer 1 — Mathematics <span class="lc">6 merged</span></h3><article class="pr" id="pr-9103">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/Project-MONAI/MONAI/pull/9103">Project-MONAI/MONAI <b>#9103</b></a>
+      <div class="meta">+17/&minus;1 · 2 files · merged 2026-10-03</div></div>
+    <div class="chips"><span class="chip layer">L1 Mathematics</span><span class="chip risk med">Medium · 6.0/25</span></div>
+  </div>
+  <h4>fix(losses): BarlowTwinsLoss preserves float16/bfloat16 input dtype</h4>
+  <p class="cls"><b>Class:</b> dtype loss</p>
+  <p class="threat"><b>Threat model:</b> A loss silently upcasts fp16/bf16 inputs, breaking mixed-precision numerics.</p>
+  <p class="plain"><code>BarlowTwinsLoss</code> did not preserve float16/bfloat16 input dtype. In mixed-precision training this silently changes numerics. Preserves the input dtype.</p>
+  <div class="difftitle">tests/losses/test_barlow_twins_loss.py</div><pre class="diff"><span class="ctx">         with self.assertWarns(Warning):</span>
+<span class="ctx">             BarlowTwinsLoss(lambd=5e-3, batch_size=1)</span>
+<span class="ctx"> </span>
+<span class="add">+    @parameterized.expand([(torch.float64,), (torch.float32,), (torch.bfloat16,), (torch.float16,)])</span>
+<span class="add">+    def test_preserves_input_dtype(self, dtype):</span>
+<span class="add">+        &quot;&quot;&quot;Check that the loss keeps the dtype of its inputs.</span>
+<span class="add">+</span>
+<span class="add">+        The cross-correlation matrix `c` follows the input dtype, but `c - torch.eye(...)` used to silently upcast</span>
+<span class="add">+        to float32 whenever the dtype was below float32, because `torch.eye()` was never given an explicit dtype.</span>
+<span class="add">+</span>
+<span class="add">+        Args:</span>
+<span class="add">+            dtype: floating-point dtype of the two input tensors, which the returned loss must also have.</span>
+<span class="add">+        &quot;&quot;&quot;</span>
+<span class="add">+        loss = BarlowTwinsLoss(lambd=5e-3)</span>
+<span class="add">+        i = torch.randn(4, 8, dtype=dtype)</span>
+<span class="add">+        j = torch.randn(4, 8, dtype=dtype)</span>
+<span class="add">+        output = loss(i, j)</span>
+<span class="add">+        self.assertEqual(output.dtype, dtype)</span>
+<span class="add">+</span>
+<span class="ctx"> </span>
+<span class="ctx"> if __name__ == &quot;__main__&quot;:</span>
+<span class="ctx">     unittest.main()</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:80%"></span></span><span class="mval">4</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-4361">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/kornia/kornia/pull/4361">kornia/kornia <b>#4361</b></a>
+      <div class="meta">+51/&minus;7 · 4 files · merged 2026-09-21</div></div>
+    <div class="chips"><span class="chip layer">L1 Mathematics</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>fix(geometry): render_gaussian2d pixel-coordinate linspace built at dtype</h4>
+  <p class="cls"><b>Class:</b> coordinate grid dtype/exactness</p>
+  <p class="threat"><b>Threat model:</b> render_gaussian2d built its pixel-coordinate linspace at the wrong dtype, shifting the rendered peak.</p>
+  <p class="plain"><code>render_gaussian2d</code>'s pixel-coordinate <code>linspace</code> was not built at the image dtype, shifting the Gaussian. Built it at dtype.</p>
+  <div class="difftitle">tests/geometry/subpix/test_dsnt.py</div><pre class="diff"><span class="ctx"> </span>
+<span class="ctx">         self.assert_close(res_orig, res_opt)</span>
+<span class="ctx"> </span>
+<span class="add">+    @pytest.mark.parametrize(&quot;dtype&quot;, [torch.float16, torch.bfloat16])</span>
+<span class="add">+    @pytest.mark.parametrize(&quot;normalized&quot;, [False, True])</span>
+<span class="add">+    @pytest.mark.parametrize(&quot;axis&quot;, [&quot;x&quot;, &quot;y&quot;])</span>
+<span class="add">+    # 2049.3 is above float16&#x27;s exact-integer limit (2048); 1500.2 is below it, where only bfloat16 (limit 256)</span>
+<span class="add">+    # collapses. One mean is not enough: bfloat16 in normalized mode is 1 px off at 2049.3 but 7 px off at 1500.2.</span>
+<span class="add">+    @pytest.mark.parametrize(&quot;mu&quot;, [2049.3, 1500.2])</span>
+<span class="add">+    def test_large_grid_peak_not_distorted(self, device, dtype, normalized, axis, mu):</span>
+<span class="add">+        &quot;&quot;&quot;The coordinate grid must not collapse in half precision (float16 above 2048, bfloat16 above ~256).&quot;&quot;&quot;</span>
+<span class="add">+        n = 2200</span>
+<span class="add">+        size = (10, n) if axis == &quot;x&quot; else (n, 10)</span>
+<span class="add">+        mu_norm = mu / (n - 1) * 2 - 1</span>
+<span class="add">+        mean_xy = [mu, 5.0] if axis == &quot;x&quot; else [5.0, mu]</span>
+<span class="add">+        std_xy = [2.0, 2.0]</span>
+<span class="add">+        if normalized:</span>
+<span class="add">+            mean_xy = [mu_norm, 0.0] if axis == &quot;x&quot; else [0.0, mu_norm]</span>
+<span class="add">+            # A sigma of 6 pixels on EACH axis, expressed in that axis&#x27;s own normalized units. Wide enough to keep</span>
+<span class="add">+            # 1 / sigma**2 inside the float16 range on the long axis, and (unlike one shared value) still wide enough</span>
+<span class="add">+            # to cover grid points on the short axis, where a tiny sigma makes the whole heatmap round to zero.</span>
+<span class="add">+            (h, w) = size</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-4360">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/kornia/kornia/pull/4360">kornia/kornia <b>#4360</b></a>
+      <div class="meta">+109/&minus;1 · 3 files · merged 2026-09-21</div></div>
+    <div class="chips"><span class="chip layer">L1 Mathematics</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>fix(enhance): image_histogram2d bin centers built at image.dtype</h4>
+  <p class="cls"><b>Class:</b> histogram bin-center dtype</p>
+  <p class="threat"><b>Threat model:</b> image_histogram2d built bin centers at the wrong dtype, biasing the histogram.</p>
+  <p class="plain"><code>image_histogram2d</code> built its bin centers at a fixed dtype rather than the image's, biasing low-precision results. Built at image dtype.</p>
+  <div class="difftitle">tests/enhance/test_histogram.py</div><pre class="diff"><span class="ctx">         ans = 0.1 * torch.ones_like(hist)</span>
+<span class="ctx">         self.assert_close(ans, pdf)</span>
+<span class="ctx"> </span>
+<span class="add">+    def test_large_n_bins_float16_centers_not_collapsed(self, device):</span>
+<span class="add">+        &quot;&quot;&quot;image_histogram2d built its bin-center arange at image.dtype -- float16 can only</span>
+<span class="add">+        exactly represent integers up to 2048 (torch.arange(4096, dtype=torch.float16) has only</span>
+<span class="add">+        3073 distinct values, not 4096), so with enough bins, DIFFERENT bin indices silently</span>
+<span class="add">+        collapsed onto the SAME center value, giving those bins numerically IDENTICAL kernel-</span>
+<span class="add">+        density output regardless of the real underlying data spread.</span>
+<span class="add">+</span>
+<span class="add">+        Compares the function&#x27;s own auto-constructed centers against EXPLICITLY-supplied</span>
+<span class="add">+        float32 centers on the *same* float16 image tensor (the `centers=` argument bypasses</span>
+<span class="add">+        internal construction entirely) -- this isolates the bug mechanism cleanly, with no</span>
+<span class="add">+        confound from float16 also quantizing the image&#x27;s own pixel VALUES (a separate, benign,</span>
+<span class="add">+        expected precision limit unrelated to how centers are built). float32 is an exact</span>
+<span class="add">+        reference here: n_bins=4096 is far below float32&#x27;s 2**24 integer limit (MPS has no</span>
+<span class="add">+        float64). The tolerance is far below the error the collapse causes.&quot;&quot;&quot;</span>
+<span class="add">+        torch.manual_seed(0)</span>
+<span class="add">+        n_bins = 4096</span>
+<span class="add">+        image = torch.rand(1, 64, 64, device=device, dtype=torch.float16)</span>
+<span class="add">+</span>
+<span class="add">+        hist_auto, _ = TestImageHistogram2d.fcn(image, 0.0, 1.0, n_bins, kernel=&quot;gaussian&quot;)</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-4336">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/kornia/kornia/pull/4336">kornia/kornia <b>#4336</b></a>
+      <div class="meta">+41/&minus;2 · 3 files · merged 2026-09-08</div></div>
+    <div class="chips"><span class="chip layer">L1 Mathematics</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>fix(geometry): bbox_to_mask position grid is exact at any image size</h4>
+  <p class="cls"><b>Class:</b> off-by-fraction coordinate grid</p>
+  <p class="threat"><b>Threat model:</b> bbox_to_mask&#x27;s position grid is inexact at some image sizes, mislabelling boundary pixels.</p>
+  <p class="plain"><code>bbox_to_mask</code>'s coordinate grid was not exact at arbitrary image sizes, so boundary pixels fell on the wrong side. Made the grid exact at any size.</p>
+  <div class="difftitle">tests/geometry/test_bbox.py</div><pre class="diff"><span class="ctx">         fractional = torch.tensor([[[1.4, 1.4], [3.6, 1.4], [3.6, 2.6], [1.4, 2.6]]], device=device, dtype=dtype)</span>
+<span class="ctx">         assert bbox_to_mask(fractional, 6, 5).sum().item() == 2.0</span>
+<span class="ctx"> </span>
+<span class="add">+    @pytest.mark.parametrize(&quot;half_dtype&quot;, [torch.float16, torch.bfloat16])</span>
+<span class="add">+    def test_bbox_to_mask_position_grid_is_exact_for_half_boxes_on_a_large_image(self, device, half_dtype):</span>
+<span class="add">+        # float16/bfloat16 can only represent consecutive integers exactly up to 2048 px /</span>
+<span class="add">+        # 256 px; beyond that, adjacent pixel positions collapse onto the same value.</span>
+<span class="add">+        # bbox_to_mask&#x27;s position grid used to be built at boxes.dtype, so a half-precision</span>
+<span class="add">+        # `boxes` on an image past that threshold silently mismasked rows/columns near the</span>
+<span class="add">+        # collapse. Compare against the float32 result for the same region on a 4096x4096</span>
+<span class="add">+        # image -- well past the threshold on both axes for either half dtype. Coordinates</span>
+<span class="add">+        # 1000 / 3072 / 4080 are exactly representable in both half dtypes, so the half box</span>
+<span class="add">+        # covers exactly the same rectangle as the float32 one.</span>
+<span class="add">+        boxes32 = torch.tensor(</span>
+<span class="add">+            [[[1000.0, 1000.0], [4080.0, 1000.0], [4080.0, 3072.0], [1000.0, 3072.0]]], device=device</span>
+<span class="add">+        )</span>
+<span class="add">+        boxes_half = boxes32.to(half_dtype)</span>
+<span class="add">+        mask32 = bbox_to_mask(boxes32, width=4096, height=4096)</span>
+<span class="add">+        mask_half = bbox_to_mask(boxes_half, width=4096, height=4096)</span>
+<span class="add">+        assert mask_half.dtype == half_dtype</span>
+<span class="add">+        assert torch.equal(mask_half.bool(), mask32.bool())</span>
+<span class="add">+</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-4303">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/kornia/kornia/pull/4303">kornia/kornia <b>#4303</b></a>
+      <div class="meta">+32/&minus;31 · 4 files · merged 2026-09-06</div></div>
+    <div class="chips"><span class="chip layer">L1 Mathematics</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>fix(geometry): bbox_to_mask3d intersects axis ranges for a full/overhanging-axis box</h4>
+  <p class="cls"><b>Class:</b> geometry: box intersection</p>
+  <p class="threat"><b>Threat model:</b> bbox_to_mask3d mis-handles a full/overhanging-axis box, producing a wrong 3D mask.</p>
+  <p class="plain"><code>bbox_to_mask3d</code> did not intersect axis ranges correctly for a box spanning or overhanging an axis, giving a wrong mask. Intersects the ranges.</p>
+  <div class="difftitle">kornia/geometry/bbox.py</div><pre class="diff"><span class="ctx">     y = torch.arange(D1, device=boxes.device, dtype=torch.long)</span>
+<span class="ctx">     x = torch.arange(D2, device=boxes.device, dtype=torch.long)</span>
+<span class="ctx"> </span>
+<span class="del">-    # Compute mask as union of planes in one step</span>
+<span class="add">+    # Intersection of the three broadcast axis slabs, computed directly with `&amp;`. This used to</span>
+<span class="add">+    # `|` the three slabs and recover the intersection with a three-way `all()` reduction/product;</span>
+<span class="add">+    # that recovery breaks the moment any one slab covers a whole axis, since the union is then</span>
+<span class="add">+    # all-true on that axis and the reduction can no longer see the other two slabs&#x27; bounds. `&amp;`</span>
+<span class="add">+    # needs no such recovery step -- each broadcast slab already carries its own axis&#x27;s bound at</span>
+<span class="add">+    # every position, so the elementwise intersection is exactly the answer.</span>
+<span class="ctx">     m = (</span>
+<span class="ctx">         ((z[None, :] &gt;= z_min[:, None]) &amp; (z[None, :] &lt;= z_max[:, None]))[:, None, :, None, None]</span>
+<span class="del">-        | ((y[None, :] &gt;= y_min[:, None]) &amp; (y[None, :] &lt;= y_max[:, None]))[:, None, None, :, None]</span>
+<span class="del">-        | ((x[None, :] &gt;= x_min[:, None]) &amp; (x[None, :] &lt;= x_max[:, None]))[:, None, None, None, :]</span>
+<span class="del">-    ).float()  # Shape: (N, 1, D0, D1, D2)</span>
+<span class="del">-</span>
+<span class="del">-    # Compute conditions</span>
+<span class="del">-    cond1 = m.all(dim=3, keepdim=True).all(dim=2, keepdim=True)</span>
+<span class="del">-    cond2 = m.all(dim=4, keepdim=True).all(dim=2, keepdim=True)</span>
+<span class="del">-    cond3 = m.all(dim=3, keepdim=True).all(dim=4, keepdim=True)</span>
+<span class="del">-</span>
+<span class="del">-    m_out = cond1 * cond2 * cond3  # Broadcasting to (N, 1, D0, D1, D2)</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-4299">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/kornia/kornia/pull/4299">kornia/kornia <b>#4299</b></a>
+      <div class="meta">+72/&minus;1 · 3 files · merged 2026-09-06</div></div>
+    <div class="chips"><span class="chip layer">L1 Mathematics</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>fix(geometry): finite gradients for solve_cubic at its acos boundary</h4>
+  <p class="cls"><b>Class:</b> non-finite gradient at singular point</p>
+  <p class="threat"><b>Threat model:</b> solve_cubic&#x27;s acos boundary yields NaN/Inf gradients, poisoning any training that backprops through it.</p>
+  <p class="plain"><code>solve_cubic</code> produced non-finite gradients at its <code>acos</code> boundary. The double-<code>where</code> guard keeps the backward pass finite at the singular point. Forward looks fine, gradients are NaN.</p>
+  <div class="difftitle">tests/geometry/solvers/test_polynomial_solver.py</div><pre class="diff"><span class="ctx">         coeffs = torch.tensor([[2.0, 3.0, -11.0, -6.0]], device=device, dtype=torch.float64, requires_grad=True)</span>
+<span class="ctx">         self.gradcheck(solver.solve_cubic, (coeffs,))</span>
+<span class="ctx"> </span>
+<span class="add">+    def test_convention_gradient_is_finite_at_the_acos_boundary_4290(self, device, dtype):</span>
+<span class="add">+        # #4290: d(acos)/dx = -1/sqrt(1-x^2) is unbounded at x = +-1. solve_cubic&#x27;s D&lt;=0</span>
+<span class="add">+        # branch computes acos(R / sqrt(-Q3)); the branch condition guarantees the ratio is in</span>
+<span class="add">+        # [-1, 1], but a cubic with a repeated or near-repeated root pushes it to exactly that</span>
+<span class="add">+        # boundary, where the VALUE is fine but the DERIVATIVE diverges -- same shape as the</span>
+<span class="add">+        # acos/asin boundary in quaternion_exp_to_log/euler_from_quaternion (#4007, fixed in</span>
+<span class="add">+        # #4228), a different call site not covered by that fix.</span>
+<span class="add">+        #</span>
+<span class="add">+        # This resolvent cubic comes from kornia&#x27;s OWN existing double-root quartic fixture</span>
+<span class="add">+        # (TestQuarticSolver.test_solve_quartic, &quot;Case 3: Double Roots&quot;: (x-2)^2(x-3)(x+1),</span>
+<span class="add">+        # coeffs [1, -6, 9, 4, -12]) -- already in the suite, already passes on forward value,</span>
+<span class="add">+        # because that test never calls .backward(). It fails immediately if you do.</span>
+<span class="add">+        coeffs = torch.tensor([[1.0, -6.0, 9.0, 4.0, -12.0]], device=device, dtype=dtype, requires_grad=True)</span>
+<span class="add">+        roots = solver.solve_quartic(coeffs)</span>
+<span class="add">+        roots.sum().backward()</span>
+<span class="add">+        assert bool(torch.isfinite(coeffs.grad).all()), coeffs.grad</span>
+<span class="add">+</span>
+<span class="add">+        # The forward value is unaffected by the gradient guard: unchanged, sorted match to the</span>
+<span class="add">+        # documented roots -1, 2, 2, 3.</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article></section><section class="layer"><h3 id="layer-5">Layer 5 — Training <span class="lc">4 merged</span></h3><article class="pr" id="pr-744">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/fangwei123456/spikingjelly/pull/744">fangwei123456/spikingjelly <b>#744</b></a>
+      <div class="meta">+53/&minus;6 · 4 files · merged 2026-09-06</div></div>
+    <div class="chips"><span class="chip layer">L5 Training</span><span class="chip risk med">Medium · 6.0/25</span></div>
+  </div>
+  <h4>Fix MSTDPLearner initialising eligibility without a dtype</h4>
+  <p class="cls"><b>Class:</b> dtype loss (learner state)</p>
+  <p class="threat"><b>Threat model:</b> An STDP learner initialises eligibility traces without a dtype, mismatching the network precision.</p>
+  <p class="plain"><code>MSTDPLearner</code> created its eligibility trace without a dtype, defaulting to float32 under a non-default-dtype network. Initialises with the right dtype.</p>
+  <div class="difftitle">test/activation_based/test_learning.py</div><pre class="diff"><span class="ctx">     assert trace_pre_next is trace_pre</span>
+<span class="ctx">     assert trace_post_next is trace_post</span>
+<span class="ctx">     assert torch.equal(delta_w, torch.zeros_like(synapse.weight))</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+@pytest.mark.parametrize(&quot;dtype&quot;, [torch.float16, torch.float64])</span>
+<span class="add">+def test_mstdp_learner_eligibility_follows_synapse_dtype(dtype):</span>
+<span class="add">+    # A non-float32 synapse (AMP half, or double) must not produce a</span>
+<span class="add">+    # mismatched-dtype eligibility / weight gradient. MSTDPLearner initialised</span>
+<span class="add">+    # ``eligibility`` with torch.zeros(...) and no ``dtype=``, so it defaulted to</span>
+<span class="add">+    # float32; on a half synapse the resulting ``weight.grad = -delta_w`` raised</span>
+<span class="add">+    # a dtype-assignment RuntimeError. MSTDPETLearner already does this correctly</span>
+<span class="add">+    # via torch.zeros_like(self.synapse.weight).</span>
+<span class="add">+    fc = nn.Linear(8, 5, bias=False).to(dtype)</span>
+<span class="add">+    sn = neuron.LIFNode(step_mode=&quot;s&quot;)</span>
+<span class="add">+    learner = learning.MSTDPLearner(</span>
+<span class="add">+        step_mode=&quot;s&quot;,</span>
+<span class="add">+        synapse=fc,</span>
+<span class="add">+        sn=sn,</span>
+<span class="add">+        batch_size=3,</span>
+<span class="add">+        tau_pre=2.0,</span>
+<span class="add">+        tau_post=2.0,</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:80%"></span></span><span class="mval">4</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-2849">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/huggingface/pytorch-image-models/pull/2849">huggingface/pytorch-image-models <b>#2849</b></a>
+      <div class="meta">+26/&minus;2 · 2 files · merged 2026-10-14</div></div>
+    <div class="chips"><span class="chip layer">L5 Training</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>Fix features_only backward with grad checkpointing for in-place stem activations</h4>
+  <p class="cls"><b>Class:</b> in-place op breaks backward</p>
+  <p class="threat"><b>Threat model:</b> features_only + grad checkpointing + an in-place stem activation corrupts the backward pass.</p>
+  <p class="plain">With <code>features_only</code> and gradient checkpointing, an in-place stem activation broke the recomputed backward. Fixed so checkpointed backward is correct.</p>
+  <div class="difftitle">tests/test_models.py</div><pre class="diff"><span class="ctx">         assert not torch.allclose(pooled_avg, expected)</span>
+<span class="ctx"> </span>
+<span class="ctx"> </span>
+<span class="add">+</span>
+<span class="add">+@pytest.mark.base</span>
+<span class="add">+@pytest.mark.parametrize(&#x27;model_name&#x27;, [&#x27;resnet18&#x27;, &#x27;resnet50d&#x27;, &#x27;convnext_atto&#x27;])</span>
+<span class="add">+def test_features_only_grad_checkpointing_backward(model_name):</span>
+<span class="add">+    # backbones built with features_only=True are trained with gradient checkpointing in detection/segmentation</span>
+<span class="add">+    # pipelines; backward must work and give the same gradients as without checkpointing</span>
+<span class="add">+    x = torch.randn(2, 3, 64, 64)</span>
+<span class="add">+    grads = []</span>
+<span class="add">+    for grad_checkpointing in (False, True):</span>
+<span class="add">+        torch.manual_seed(0)</span>
+<span class="add">+        model = create_model(model_name, pretrained=False, features_only=True).train()</span>
+<span class="add">+        model.set_grad_checkpointing(grad_checkpointing)</span>
+<span class="add">+        sum(f.pow(2).mean() for f in model(x)).backward()</span>
+<span class="add">+        grads.append([p.grad for p in model.parameters() if p.grad is not None])</span>
+<span class="add">+    assert len(grads[0]) == len(grads[1])</span>
+<span class="add">+    for g0, g1 in zip(*grads):</span>
+<span class="add">+        torch.testing.assert_close(g1, g0)</span>
+<span class="add">+</span>
+<span class="ctx"> @pytest.mark.base</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-3252">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/vllm-project/llm-compressor/pull/3252">vllm-project/llm-compressor <b>#3252</b></a>
+      <div class="meta">+45/&minus;9 · 4 files · merged 2026-10-14</div></div>
+    <div class="chips"><span class="chip layer">L5 Training</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>[Quantization] Flag layers narrower than group_size in the early group-size check</h4>
+  <p class="cls"><b>Class:</b> validation gap (quantization)</p>
+  <p class="threat"><b>Threat model:</b> Layers narrower than group_size pass the early check, then quantize wrongly later.</p>
+  <p class="plain">The early group-size check did not flag layers narrower than <code>group_size</code>, so they slipped through to be quantized incorrectly. Flags them up front.</p>
+  <div class="difftitle">tests/llmcompressor/modifiers/quantization/test_group_size_validation.py</div><pre class="diff"><span class="ctx"> </span>
+<span class="ctx">     with torch.no_grad():</span>
+<span class="ctx">         modifier.on_initialize(state)</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+def test_layer_narrower_than_group_size_is_indivisible():</span>
+<span class="add">+    &quot;&quot;&quot;columns &lt; group_size cannot form a single group either (e.g. Mamba dt_proj</span>
+<span class="add">+    with in_features=dt_rank=48), so it must be reported like any other</span>
+<span class="add">+    indivisible layer instead of failing later in compressed-tensors.&quot;&quot;&quot;</span>
+<span class="add">+    from compressed_tensors.quantization import QuantizationStrategy</span>
+<span class="add">+</span>
+<span class="add">+    linear = torch.nn.Linear(48, 64)  # weight.shape=(64,48) -&gt; columns=48 &lt; 128</span>
+<span class="add">+    weight_args = types.SimpleNamespace(</span>
+<span class="add">+        strategy=QuantizationStrategy.GROUP, group_size=128</span>
+<span class="add">+    )</span>
+<span class="add">+    assert _layer_indivisible(linear, weight_args) == (48, 128)</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+def test_initialize_quantization_raises_early_for_layer_narrower_than_group():</span>
+<span class="add">+    &quot;&quot;&quot;Modifier raises at on_initialize for a layer with columns &lt; group_size.&quot;&quot;&quot;</span>
+<span class="add">+    model = _FlatModel(48, 64)  # weight.shape[-1]=48 &lt; 128</span>
+<span class="add">+    state = State()</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-4359">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/kornia/kornia/pull/4359">kornia/kornia <b>#4359</b></a>
+      <div class="meta">+98/&minus;5 · 3 files · merged 2026-09-18</div></div>
+    <div class="chips"><span class="chip layer">L5 Training</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>fix(feature): CoarseMatching training-mode gt-padding crash + dtype leak</h4>
+  <p class="cls"><b>Class:</b> training-mode crash + dtype leak</p>
+  <p class="threat"><b>Threat model:</b> CoarseMatching&#x27;s training-mode ground-truth padding crashes, and leaks a dtype.</p>
+  <p class="plain"><code>CoarseMatching</code> crashed on its training-mode gt-padding path and leaked a dtype. Fixed both.</p>
+  <div class="difftitle">tests/feature/test_loftr.py</div><pre class="diff"><span class="ctx">         out_jit = model_jit(sample)</span>
+<span class="ctx">         for k, v in out.items():</span>
+<span class="ctx">             self.assert_close(v, out_jit[k])</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+class TestCoarseMatching(BaseTester):</span>
+<span class="add">+    &quot;&quot;&quot;CoarseMatching.get_coarse_match&#x27;s training-mode gt-padding branch</span>
+<span class="add">+    (self.training=True) previously crashed unconditionally: zip() was</span>
+<span class="add">+    called with 4 separate 2-element lists instead of 2 separate</span>
+<span class="add">+    4-element lists, so `for x, y in zip(...)` tried to unpack each</span>
+<span class="add">+    resulting 4-tuple into 2 variables and raised</span>
+<span class="add">+    `ValueError: too many values to unpack (expected 2)` on every call.</span>
+<span class="add">+    No existing test exercised this training-mode path at all.</span>
+<span class="add">+</span>
+<span class="add">+    The grid is deliberately asymmetric (L=16, S=12) and the predictions</span>
+<span class="add">+    deterministic (no RNG) so the pairing/ordering/count the fix changes</span>
+<span class="add">+    -- not just &quot;does it crash&quot; or &quot;is the dtype right&quot; -- are pinned.</span>
+<span class="add">+    Verified against 8 single-token mutations of the production fix</span>
+<span class="add">+    (reverting the zip() shape, dropping the dtype fix, swapping the gt</span>
+<span class="add">+    id lists, swapping the concat order, swapping which side is padding,</span>
+<span class="add">+    flipping the zero-fill to ones, and disabling the branch entirely):</span>
+<span class="add">+    all 8 are killed by this test, where the previous dtype-only</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article></section><section class="layer"><h3 id="layer-3">Layer 3 — Data <span class="lc">3 merged</span></h3><article class="pr" id="pr-2106">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/librosa/librosa/pull/2106">librosa/librosa <b>#2106</b></a>
+      <div class="meta">+117/&minus;24 · 4 files · merged 2026-09-29</div></div>
+    <div class="chips"><span class="chip layer">L3 Data</span><span class="chip risk med">Medium · 6.0/25</span></div>
+  </div>
+  <h4>Preserve float32 in spectral features; add dtype= to frequency constructors</h4>
+  <p class="cls"><b>Class:</b> dtype loss</p>
+  <p class="threat"><b>Threat model:</b> Spectral features silently promote float32 audio to float64, doubling memory and breaking dtype assumptions.</p>
+  <p class="plain">Spectral feature functions did not preserve float32; frequency constructors had no <code>dtype=</code>. Added dtype plumbing so audio pipelines stay in their chosen precision.</p>
+  <div class="difftitle">tests/test_convert.py</div><pre class="diff"><span class="ctx">     assert np.allclose(dels, dels[0])</span>
+<span class="ctx"> </span>
+<span class="ctx"> </span>
+<span class="add">+@pytest.mark.parametrize(&quot;dtype&quot;, [np.float32, np.float64])</span>
+<span class="add">+@pytest.mark.parametrize(</span>
+<span class="add">+    &quot;constructor&quot;,</span>
+<span class="add">+    [</span>
+<span class="add">+        lambda dtype: librosa.fft_frequencies(sr=22050, n_fft=1024, dtype=dtype),</span>
+<span class="add">+        lambda dtype: librosa.cqt_frequencies(24, fmin=32.7, dtype=dtype),</span>
+<span class="add">+        lambda dtype: librosa.mel_frequencies(40, dtype=dtype),</span>
+<span class="add">+        lambda dtype: librosa.tempo_frequencies(128, dtype=dtype),</span>
+<span class="add">+        lambda dtype: librosa.fourier_tempo_frequencies(dtype=dtype),</span>
+<span class="add">+    ],</span>
+<span class="add">+)</span>
+<span class="add">+def test_frequency_constructor_dtype(constructor, dtype):</span>
+<span class="add">+    # The frequency-grid constructors allocate at the requested precision.</span>
+<span class="add">+    # See https://github.com/librosa/librosa/issues/2099</span>
+<span class="add">+    assert constructor(dtype).dtype == dtype</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+def test_fft_frequencies_dtype_values_unchanged():</span>
+<span class="add">+    # The default (float64) grid must stay bit-for-bit identical to rfftfreq.</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:80%"></span></span><span class="mval">4</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-4210">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/kornia/kornia/pull/4210">kornia/kornia <b>#4210</b></a>
+      <div class="meta">+43/&minus;20 · 5 files · merged 2026-09-05</div></div>
+    <div class="chips"><span class="chip layer">L3 Data</span><span class="chip risk med">Medium · 6.0/25</span></div>
+  </div>
+  <h4>fix(augmentation): auto-augment ops preserve float16 / bfloat16 input dtype</h4>
+  <p class="cls"><b>Class:</b> dtype loss (augmentation)</p>
+  <p class="threat"><b>Threat model:</b> Auto-augment ops silently upcast fp16/bf16 inputs during the data pipeline.</p>
+  <p class="plain">Auto-augment operations did not preserve float16/bfloat16, upcasting in the data pipeline. Preserves input dtype.</p>
+  <div class="difftitle">tests/augmentation/test_auto_operation.py</div><pre class="diff"><span class="ctx"> </span>
+<span class="ctx">     def test_sequential(augment_method, device, dtype):</span>
+<span class="ctx">         _test_sequential(TrivialAugment(), device=device, dtype=dtype)</span>
+<span class="add">+</span>
+<span class="add">+</span>
+<span class="add">+@pytest.mark.parametrize(&quot;low_dtype&quot;, [torch.float16, torch.bfloat16])</span>
+<span class="add">+def test_operation_preserves_input_dtype(device, low_dtype):</span>
+<span class="add">+    # OperationBase.forward gated the op output with a float32 ``batch_prob``</span>
+<span class="add">+    # mask, so ``mask * op(x) + (1 - mask) * x`` promoted a float16 / bfloat16</span>
+<span class="add">+    # input to float32. float32 / float64 inputs are unaffected (promotion goes</span>
+<span class="add">+    # up), which is why this only shows below float32. Covers RandAugment /</span>
+<span class="add">+    # AutoAugment / TrivialAugment / AugMix, which all route through this method.</span>
+<span class="add">+    # dtype preservation is device-independent; check it on CPU (the auto-augment</span>
+<span class="add">+    # RNG state of a freshly built ``_find_all_ops()`` op does not fully follow a</span>
+<span class="add">+    # post-hoc ``.to(non-cpu)``).</span>
+<span class="add">+    if torch.device(device).type != &quot;cpu&quot;:</span>
+<span class="add">+        pytest.skip(&quot;dtype-preservation check runs on CPU&quot;)</span>
+<span class="add">+    checked = 0</span>
+<span class="add">+    for op in _find_all_ops():</span>
+<span class="add">+        x = torch.rand(2, 3, 16, 16, dtype=low_dtype)</span>
+<span class="add">+        try:</span>
+<span class="add">+            out = op(x)</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:80%"></span></span><span class="mval">4</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-49767">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/huggingface/transformers/pull/49767">huggingface/transformers <b>#49767</b></a>
+      <div class="meta">+69/&minus;45 · 7 files · merged 2026-10-21</div></div>
+    <div class="chips"><span class="chip layer">L3 Data</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>Fix background_color handling across DeepSeek-VL and Janus image processors</h4>
+  <p class="cls"><b>Class:</b> preprocessing inconsistency</p>
+  <p class="threat"><b>Threat model:</b> Inconsistent background_color handling across DeepSeek-VL and Janus image processors skews pixel inputs.</p>
+  <p class="plain">The <code>background_color</code> padding value was handled inconsistently across the DeepSeek-VL and Janus multimodal image processors. Unified the handling.</p>
+  <div class="difftitle">src/transformers/models/deepseek_vl_hybrid/image_processing_deepseek_vl_hybrid.py</div><pre class="diff"><span class="ctx">     model_input_names = [&quot;pixel_values&quot;, &quot;high_res_pixel_values&quot;]</span>
+<span class="ctx"> </span>
+<span class="ctx">     def __init__(self, **kwargs: Unpack[DeepseekVLHybridImageProcessorKwargs]):</span>
+<span class="del">-        if kwargs.get(&quot;image_mean&quot;) is None:</span>
+<span class="del">-            background_color = (127, 127, 127)</span>
+<span class="add">+        super().__init__(**kwargs)</span>
+<span class="add">+        image_mean = getattr(self, &quot;image_mean&quot;, None)</span>
+<span class="add">+        if image_mean is None:</span>
+<span class="add">+            self.background_color = (127, 127, 127)</span>
+<span class="ctx">         else:</span>
+<span class="del">-            background_color = tuple(int(x * 255) for x in kwargs.get(&quot;image_mean&quot;))</span>
+<span class="del">-        if kwargs.get(&quot;high_res_image_mean&quot;) is None:</span>
+<span class="del">-            high_res_background_color = (127, 127, 127)</span>
+<span class="add">+            self.background_color = tuple(int(x * 255) for x in image_mean)</span>
+<span class="add">+        high_res_image_mean = getattr(self, &quot;high_res_image_mean&quot;, None)</span>
+<span class="add">+        if high_res_image_mean is None:</span>
+<span class="add">+            self.high_res_background_color = (127, 127, 127)</span>
+<span class="ctx">         else:</span>
+<span class="del">-            high_res_background_color = tuple(int(x * 255) for x in kwargs.get(&quot;high_res_image_mean&quot;))</span>
+<span class="del">-        super().__init__(**kwargs)</span>
+<span class="del">-        self.background_color = tuple(background_color)</span>
+<span class="del">-        self.high_res_background_color = tuple(high_res_background_color)</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article></section><section class="layer"><h3 id="layer-9">Layer 9 — Inference/serving <span class="lc">2 merged</span></h3><article class="pr" id="pr-2651">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/NVIDIA/Model-Optimizer/pull/2651">NVIDIA/Model-Optimizer <b>#2651</b></a>
+      <div class="meta">+100/&minus;3 · 2 files · merged 2026-10-06</div></div>
+    <div class="chips"><span class="chip layer">L9 Inference/serving</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>Export unquantized FP8Linear layers in the export dtype, not fp32</h4>
+  <p class="cls"><b>Class:</b> export dtype</p>
+  <p class="threat"><b>Threat model:</b> Unquantized FP8 layers export as fp32, bloating and mis-typing the exported model.</p>
+  <p class="plain">Unquantized <code>FP8Linear</code> layers exported in fp32 rather than the export dtype, changing the served model. Export in the intended dtype.</p>
+  <div class="difftitle">tests/gpu/torch/export/test_export_fp8_linear.py</div><pre class="diff"><span class="add">+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION &amp; AFFILIATES. All rights reserved.</span>
+<span class="add">+# SPDX-License-Identifier: Apache-2.0</span>
+<span class="add">+#</span>
+<span class="add">+# Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);</span>
+<span class="add">+# you may not use this file except in compliance with the License.</span>
+<span class="add">+# You may obtain a copy of the License at</span>
+<span class="add">+#</span>
+<span class="add">+# http://www.apache.org/licenses/LICENSE-2.0</span>
+<span class="add">+#</span>
+<span class="add">+# Unless required by applicable law or agreed to in writing, software</span>
+<span class="add">+# distributed under the License is distributed on an &quot;AS IS&quot; BASIS,</span>
+<span class="add">+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.</span>
+<span class="add">+# See the License for the specific language governing permissions and</span>
+<span class="add">+# limitations under the License.</span>
+<span class="add">+</span>
+<span class="add">+&quot;&quot;&quot;Export-path tests for Hugging Face FP8Linear sources (CUDA-only).</span>
+<span class="add">+</span>
+<span class="add">+``_QuantFP8Linear.unpack_weight`` dequantizes under ``torch.cuda.device``, so the suite</span>
+<span class="add">+lives under ``tests/gpu/`` rather than ``tests/unit/``.</span>
+<span class="add">+&quot;&quot;&quot;</span>
+<span class="add">+</span>
+<span class="add">+import pytest</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article><article class="pr" id="pr-26075">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/ultralytics/ultralytics/pull/26075">ultralytics/ultralytics <b>#26075</b></a>
+      <div class="meta">+9/&minus;69 · 3 files · merged 2026-09-07</div></div>
+    <div class="chips"><span class="chip layer">L9 Inference/serving</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>Remove stale SAM3 decoder coordinate caches</h4>
+  <p class="cls"><b>Class:</b> stale cache (correctness)</p>
+  <p class="threat"><b>Threat model:</b> A decoder kept stale coordinate caches across calls, so a later inference used a previous input&#x27;s coordinates.</p>
+  <p class="plain">The SAM3 decoder kept stale coordinate caches between calls. Removed them so each inference uses its own coordinates — a state-leak-across-calls bug (net -60 lines).</p>
+  <div class="difftitle">ultralytics/models/sam/sam3/decoder.py</div><pre class="diff"><span class="ctx">         for layer_idx, decoder_layer in enumerate(self.layers):</span>
+<span class="ctx">             decoder_layer.layer_idx = layer_idx</span>
+<span class="ctx"> </span>
+<span class="del">-    @staticmethod</span>
+<span class="del">-    def _get_coords(H, W, device, dtype):</span>
+<span class="del">-        &quot;&quot;&quot;Get normalized coordinates for height and width.&quot;&quot;&quot;</span>
+<span class="del">-        coords_h = torch.arange(0, H, dtype=dtype, device=device) / H</span>
+<span class="del">-        coords_w = torch.arange(0, W, dtype=dtype, device=device) / W</span>
+<span class="del">-        return coords_h, coords_w</span>
+<span class="del">-</span>
+<span class="ctx">     def _get_rpb_matrix(self, reference_boxes, feat_size):</span>
+<span class="ctx">         &quot;&quot;&quot;Get the relative position bias (RPB) matrix for box-relative position bias.&quot;&quot;&quot;</span>
+<span class="ctx">         H, W = feat_size</span>
+<span class="ctx">         boxes_xyxy = xywh2xyxy(reference_boxes).transpose(0, 1)</span>
+<span class="ctx">         bs, num_queries, _ = boxes_xyxy.shape</span>
+<span class="del">-        if self.compilable_cord_cache is None:</span>
+<span class="del">-            self.compilable_cord_cache = self._get_coords(H, W, reference_boxes.device, reference_boxes.dtype)</span>
+<span class="del">-            self.compilable_stored_size = (H, W)</span>
+<span class="del">-</span>
+<span class="del">-        if torch.compiler.is_dynamo_compiling() or self.compilable_stored_size == (</span>
+<span class="del">-            H,</span>
+<span class="del">-            W,</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article></section><section class="layer"><h3 id="layer-13">Layer 13 — Deployment &amp; org <span class="lc">2 merged</span></h3><article class="pr" id="pr-87503">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/ansible/ansible/pull/87503">ansible/ansible <b>#87503</b></a>
+      <div class="meta">+36/&minus;2 · 3 files · merged 2026-09-24</div></div>
+    <div class="chips"><span class="chip layer">L13 Deployment &amp; org</span><span class="chip risk med">Medium · 7.5/25</span></div>
+  </div>
+  <h4>vars: copy facts in set_host_facts() to stop cross-host fact aliasing (#87415)</h4>
+  <p class="cls"><b>Class:</b> shared mutable state (cross-host aliasing)</p>
+  <p class="threat"><b>Threat model:</b> set_host_facts() stored the caller&#x27;s dict by reference, so run_once let one host see another host&#x27;s facts.</p>
+  <p class="plain">With no cached facts, <code>set_host_facts()</code> stored the caller's dict itself, not a copy. Under run_once several hosts held the same object, so a later update made one host see another's facts. Copies the mapping.</p>
+  <div class="difftitle">test/integration/targets/gathering_facts/test_run_once.yml</div><pre class="diff"><span class="ctx">           file:</span>
+<span class="ctx">             path: /etc/ansible/facts.d/uuid.fact</span>
+<span class="ctx">             state: absent</span>
+<span class="add">+</span>
+<span class="add">+# https://github.com/ansible/ansible/issues/87415 -- run_once broadcasts one</span>
+<span class="add">+# templated result object to every target host; a later per-host fact update</span>
+<span class="add">+# on one of them must not leak onto the others via a shared cached dict.</span>
+<span class="add">+- hosts: facthost3,facthost4</span>
+<span class="add">+  gather_facts: no</span>
+<span class="add">+  tasks:</span>
+<span class="add">+    - name: Gather initial facts with run_once</span>
+<span class="add">+      facts_one:</span>
+<span class="add">+      run_once: True</span>
+<span class="add">+</span>
+<span class="add">+    - name: Gather additional facts for one host</span>
+<span class="add">+      facts_two:</span>
+<span class="add">+      when: inventory_hostname == &quot;facthost4&quot;</span>
+<span class="add">+</span>
+<span class="add">+    - name: Assert the untouched host still has only its run_once facts</span>
+<span class="add">+      assert:</span>
+<span class="add">+        that:</span>
+<span class="add">+          - hostvars.facthost3.ansible_facts.factsone == &#x27;from facts_one module&#x27;</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div></div>
+</article><article class="pr" id="pr-8565">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/deepspeedai/DeepSpeed/pull/8565">deepspeedai/DeepSpeed <b>#8565</b></a>
+      <div class="meta">+17/&minus;0 · 1 files · merged 2026-09-21</div></div>
+    <div class="chips"><span class="chip layer">L13 Deployment &amp; org</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>Fix memory leak and NULL-deref in shm_initialize</h4>
+  <p class="cls"><b>Class:</b> memory leak + NULL deref</p>
+  <p class="threat"><b>Threat model:</b> Shared-memory init leaks a buffer per call and dereferences an unchecked allocation.</p>
+  <p class="plain"><code>shm_initialize()</code> malloc'd a workspace, passed it to a read-only consumer, then overwrote the only pointer to it: a leak per init, plus a NULL deref on an unchecked allocation. Native C in a distributed-training path.</p>
+  <div class="difftitle">csrc/cpu/comm/shm.cpp</div><pre class="diff"><span class="ctx">     struct allreduce_workspace* workspace_buf;</span>
+<span class="ctx">     struct allreduce_workspace* workspace_buf_other;</span>
+<span class="ctx">     workspace_buf = (struct allreduce_workspace*)malloc(sizeof(struct allreduce_workspace));</span>
+<span class="add">+    if (!workspace_buf) {</span>
+<span class="add">+        printf(&quot;shm_initialize: malloc failed to allocate workspace_buf\n&quot;);</span>
+<span class="add">+        return;</span>
+<span class="add">+    }</span>
+<span class="ctx">     snprintf(shm_name, NAME_BUF_SIZE, &quot;%s_%d&quot;, shm_name_prefix, rank);</span>
+<span class="ctx">     shared_create(&amp;allreduce_buffer, shm_name, workspace_buf, sizeof(struct allreduce_workspace));</span>
+<span class="add">+    // shared_create() only reads workspace_buf&#x27;s contents (via write()) to seed the</span>
+<span class="add">+    // shared-memory segment; it doesn&#x27;t take ownership of the pointer. Free it here,</span>
+<span class="add">+    // before workspace_buf is repointed at the shared mapping below, or the original</span>
+<span class="add">+    // heap allocation is leaked for the lifetime of the process.</span>
+<span class="add">+    free(workspace_buf);</span>
+<span class="ctx">     workspace_buf = (struct allreduce_workspace*)allreduce_buffer.bytes;</span>
+<span class="ctx">     workspace_buf-&gt;states[0] = coll_alt2_allreduce_naive__copy_in_done;</span>
+<span class="ctx">     workspace_buf-&gt;states[1] = coll_begin;</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article></section><section class="layer"><h3 id="layer-10">Layer 10 — Systems around model <span class="lc">1 merged</span></h3><article class="pr" id="pr-10571">
+  <div class="prhead">
+    <div><a class="prtitle" href="https://github.com/celery/celery/pull/10571">celery/celery <b>#10571</b></a>
+      <div class="meta">+76/&minus;15 · 3 files · merged 2026-09-07</div></div>
+    <div class="chips"><span class="chip layer">L10 Systems around model</span><span class="chip risk low">Low · 5.0/25</span></div>
+  </div>
+  <h4>Fix Signature.clone() sharing kwargs with the original signature</h4>
+  <p class="cls"><b>Class:</b> shared mutable state (aliasing)</p>
+  <p class="threat"><b>Threat model:</b> Signature.clone() passed kwargs by reference, so mutating a clone mutated the original signature.</p>
+  <p class="plain"><code>Signature.clone()</code> deep-copied options but passed <code>kwargs</code> by reference, so changing a clone changed the original. A silent task-definition corruption.</p>
+  <div class="difftitle">t/unit/tasks/test_canvas.py</div><pre class="diff"><span class="ctx">         assert kwargs == {&#x27;foo&#x27;: 1}</span>
+<span class="ctx">         assert options == {&#x27;task_id&#x27;: 3}</span>
+<span class="ctx"> </span>
+<span class="add">+    def test_clone_does_not_alias_kwargs(self):</span>
+<span class="add">+        # gh #10560: clone() used to hand back a signature that shared the</span>
+<span class="add">+        # original&#x27;s kwargs dict, so mutating a clone corrupted the source</span>
+<span class="add">+        # (and every sibling clone). Mirrors the defensive copy already made</span>
+<span class="add">+        # for options.</span>
+<span class="add">+        original = self.add.s(1, 2)</span>
+<span class="add">+        original.kwargs[&#x27;shared&#x27;] = {&#x27;nested&#x27;: True}</span>
+<span class="add">+</span>
+<span class="add">+        clone_a = original.clone()</span>
+<span class="add">+        clone_b = original.clone()</span>
+<span class="add">+        assert clone_a.kwargs is not original.kwargs</span>
+<span class="add">+        assert clone_b.kwargs is not original.kwargs</span>
+<span class="add">+        assert clone_a.kwargs is not clone_b.kwargs</span>
+<span class="add">+</span>
+<span class="add">+        clone_a.kwargs[&#x27;added_on_clone&#x27;] = 1</span>
+<span class="add">+        assert &#x27;added_on_clone&#x27; not in original.kwargs</span>
+<span class="add">+        assert &#x27;added_on_clone&#x27; not in clone_b.kwargs</span>
+<span class="add">+</span>
+<span class="add">+    def test_clone_does_not_alias_kwargs_with_non_kwargs_overrides(self):</span></pre>
+  <div class="meters"><div class="mtitle">Risk rubric (likelihood &times; impact)</div><div class="mrow"><span class="mlab">Exposure</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Ease</span><span class="mtrack"><span class="mfill" style="width:60%"></span></span><span class="mval">3</span></div><div class="mrow"><span class="mlab">Attacker gain</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div><div class="mrow"><span class="mlab">Blast radius</span><span class="mtrack"><span class="mfill" style="width:40%"></span></span><span class="mval">2</span></div></div>
+</article></section>
+
+ <footer>Diffs and metadata pulled live via the GitHub API against <a href="https://github.com/tritsystem">@tritsystem</a> on generation. Risk scores are my analysis on the stated rubric; every diff is the real merged change — click any PR to verify. Feature additions are labelled and scored 1/1/1/1 (not bugs). No unsolicited testing of third-party systems.</footer>
+</main></body></html>

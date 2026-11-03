@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security &amp; correctness track record — tritsystem</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔎</text></svg>">
+<style>
+  :root { --bg:#fbfbfd; --fg:#1b1b1f; --muted:#5f6069; --line:#e4e4ea; --card:#fff; --accent:#1f5fd0; --ok:#1f7a3a; --warn:#9a6a00; --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#111216; --fg:#e9e9ee; --muted:#9aa0ac; --line:#262830; --card:#191b21; --accent:#7aa2ff; --ok:#6cc68a; --warn:#e0b45e; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  main { max-width:820px; margin:0 auto; padding:40px 22px 80px; }
+  h1 { font-size:30px; margin:0 0 6px; letter-spacing:-.5px; }
+  h2 { font-size:20px; margin:42px 0 12px; letter-spacing:-.3px; }
+  .lede { color:var(--muted); font-size:18px; margin:0 0 4px; }
+  a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  .tag { display:inline-block; font:600 12px/1 var(--mono); color:var(--muted); border:1px solid var(--line); border-radius:20px; padding:5px 10px; margin:4px 6px 0 0; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin:18px 0; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .stat b { font-size:26px; display:block; }
+  .stat span { color:var(--muted); font-size:13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:12px 0; }
+  .card h3 { margin:0 0 4px; font-size:16px; }
+  .card .meta { font:600 12px/1 var(--mono); color:var(--muted); }
+  .tier { font:600 12px/1 var(--mono); color:var(--accent); }
+  ul { padding-left:20px; } li { margin:4px 0; }
+  code { font:13px var(--mono); background:color-mix(in srgb,var(--accent) 10%,transparent); padding:1px 5px; border-radius:5px; }
+  .ladder { font:13px/1.7 var(--mono); background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 18px; overflow-x:auto; }
+  .muted { color:var(--muted); }
+  footer { margin-top:50px; color:var(--muted); font-size:13px; border-top:1px solid var(--line); padding-top:16px; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Finding real bugs, and proving they're real</h1>
+  <p class="lede">A security &amp; correctness track record built on verifiable evidence — merged fixes, a stated evidence bar, and honest negatives.</p>
+  <p class="muted">GitHub: <a href="https://github.com/tritsystem">@tritsystem</a> · every claim below links to the public artifact.</p>
+
+  <div class="grid">
+    <div class="stat"><b>35</b><span>PRs merged into others' projects</span></div>
+    <div class="stat"><b>16</b><span>distinct open-source projects</span></div>
+    <div class="stat"><b>C · CUDA · Python · Go</b><span>languages across the fixes</span></div>
+  </div>
+  <p class="muted" style="font-size:13px">Counts are live-verifiable: <code>gh search prs --author tritsystem --merged</code>. Open/filed work is labelled as such below — only merged PRs are counted as contributions.</p>
+
+  <h2>Across ML frameworks of every kind</h2>
+  <p>Most of the merged work is in the machine-learning stack, spanning the layers where correctness and memory-safety bugs actually hide — from training infrastructure down to native kernels and up to serving/export.</p>
+  <div class="grid">
+    <div class="stat"><b>Vision</b><span><a href="https://github.com/kornia/kornia/pulls?q=is%3Apr+author%3Atritsystem">kornia</a> ×9 · <a href="https://github.com/huggingface/pytorch-image-models/pulls?q=is%3Apr+author%3Atritsystem">timm</a> ×2 · <a href="https://github.com/Project-MONAI/MONAI/pulls?q=is%3Apr+author%3Atritsystem">MONAI</a> ×2 · <a href="https://github.com/ultralytics/ultralytics/pull/26075">ultralytics</a></span></div>
+    <div class="stat"><b>LLM / transformers</b><span><a href="https://github.com/huggingface/transformers/pull/49767">transformers</a> · multimodal image processors</span></div>
+    <div class="stat"><b>Neuromorphic / SNN</b><span><a href="https://github.com/jeshraghian/snntorch/pulls?q=is%3Apr+author%3Atritsystem">snntorch</a> ×4 · <a href="https://github.com/fangwei123456/spikingjelly/pulls?q=is%3Apr+author%3Atritsystem">spikingjelly</a> ×3</span></div>
+    <div class="stat"><b>Quantization / export</b><span><a href="https://github.com/vllm-project/llm-compressor/pull/3252">llm-compressor</a> · <a href="https://github.com/NVIDIA/Model-Optimizer/pull/2651">NVIDIA Model-Optimizer</a></span></div>
+    <div class="stat"><b>Training infra</b><span><a href="https://github.com/deepspeedai/DeepSpeed/pull/8565">DeepSpeed</a> — memory leak &amp; NULL-deref in shared-memory init</span></div>
+    <div class="stat"><b>Audio</b><span><a href="https://github.com/librosa/librosa/pull/2106">librosa</a> — dtype preservation in spectral features</span></div>
+  </div>
+  <p class="muted" style="font-size:13px">The recurring theme across these: the code runs, returns a tensor of the right shape, and the numbers are quietly wrong — dtype loss, finite-gradient failures at singular points, batch cross-contamination, cache staleness. Silent integrity bugs, which is the class that matters most for ML systems.</p>
+
+  <h2>How I decide something is real</h2>
+  <p>The hard part of security work isn't finding suspicious code — tools and AI do that fast, and are just as fast at being confidently wrong. The value is in <b>calibration</b>: knowing what you've actually proven. I grade every lead on a fixed ladder and never round up.</p>
+  <div class="ladder">
+    <span class="muted">T0</span> a tool/scanner hit — a lead<br>
+    <span class="muted">T1</span> code read &amp; reasoned through — a lead<br>
+    <span class="muted">T2</span> run in a hand-built harness — a lead, <b>never</b> filed as a finding<br>
+    <span class="tier">T3</span> reproduced through the real entry point — the minimum to call it a finding<br>
+    <span class="tier">T4</span> T3 + a fix that flips the repro red→green, project's own tests still pass<br>
+    <span class="tier">T5</span> T4 + variant analysis: the whole class closed, with a guard against regressions
+  </div>
+  <p>Two rules sit underneath it: <b>validate the instrument first</b> (a sanitizer or oracle must fire on a planted bug and stay silent on clean code before I trust its silence), and <b>match the tool to the bug class</b> (AddressSanitizer misses an in-buffer uninitialized read; MemorySanitizer catches it).</p>
+
+  <h2>Selected work, told in tier language</h2>
+
+  <div class="card">
+    <h3>Use-after-free &amp; double-free in a config-management core <span class="tier">T4 · merged</span></h3>
+    <div class="meta">CFEngine · <a href="https://github.com/cfengine/core/pull/6358">core#6358</a> · backported to two release branches</div>
+    <p>A missing <code>return</code> after a free let execution fall through into a read of the freed object, then a second free. Found by reading the control flow, reproduced, fixed with the one-line early return, and verified red→green.</p>
+  </div>
+
+  <div class="card">
+    <h3>Authorization-boundary hardening for org-scoped secrets <span class="tier">merged</span></h3>
+    <div class="meta">Woodpecker CI · <a href="https://github.com/woodpecker-ci/woodpecker/pull/7365">woodpecker#7365</a></div>
+    <p>A secret query matched org membership on <code>org_id</code> alone without checking <code>repo_id = 0</code>. I stated the risk precisely — not exploitable on a normally-run instance, because no activation path yields the required state — and shipped the defensive fix <em>with</em> isolation tests. Saying exactly how far a bug does and doesn't reach is the job.</p>
+  </div>
+
+  <div class="card">
+    <h3>Memory-safety hardening in a UPnP daemon's native rule builders <span class="tier">T4 · merged</span></h3>
+    <div class="meta">miniUPnP · <a href="https://github.com/miniupnp/miniupnp/pull/922">#922</a>, <a href="https://github.com/miniupnp/miniupnp/pull/941">#941</a>, <a href="https://github.com/miniupnp/miniupnp/pull/942">#942</a> · 5 merged in this project</div>
+    <p>Unchecked <code>calloc()</code>/<code>malloc()</code> results in netfilter rule construction, plus a netlink socket left out of sync on a cache-refresh error. Low-level C on LAN-reachable input, fixed and verified at the sites that run.</p>
+  </div>
+
+  <div class="card">
+    <h3>Silent GPU out-of-bounds in 4-bit quantization <span class="tier">T4 · filed (open)</span></h3>
+    <div class="meta">bitsandbytes · <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/2105">#2105</a>, <a href="https://github.com/bitsandbytes-foundation/bitsandbytes/pull/2107">#2107</a></div>
+    <p>A floor-division under-allocated the packed buffer for wide quant-storage dtypes, so the GPU wrote one byte past the end — invisible, because the default dtype makes the formula exactly right and the allocator's padding absorbs the overflow until caching is disabled. I <em>measured</em> the blast radius (never more than 7 bytes; a neighbour tensor survived 800 trials) rather than assuming it, and filed public fixes per the project's own security guide, which classes this as correctness, not a vulnerability. Both still open — reported honestly as filed, not merged.</p>
+  </div>
+
+  <div class="card">
+    <h3>Finite gradients at a singular point <span class="tier">merged</span></h3>
+    <div class="meta">kornia · <a href="https://github.com/kornia/kornia/pull/4299">#4299</a> · 9 merged in this project</div>
+    <p>Numerical integrity treated as a correctness property: <code>solve_cubic</code> produced non-finite gradients at its <code>acos</code> boundary. Guarded both branches so the backward pass stays finite — the kind of silent wrong-answer bug that never crashes and never logs.</p>
+  </div>
+
+  <div class="card">
+    <h3>Unsafe deserialization → remote code execution <span class="warn">coordinated disclosure in progress</span></h3>
+    <div class="meta">ML framework · reported privately · CWE-502 · no CVE assigned yet</div>
+    <p>A neuromorphic library's public, documented model-loading API called <code>torch.load(…, weights_only=False)</code> on a caller-supplied path with no validation — loading any untrusted <code>.pt</code> file runs arbitrary code. Reported through the project's private security-advisory channel, currently in triage. Details, target, and identifiers withheld until the maintainer publishes. Found as an earlier static-only report that had never been executed; I ran the PoC against the real, unmodified function before reporting — a lead isn't a finding until it reproduces.</p>
+  </div>
+
+  <h2>The part most portfolios leave out: a measured negative</h2>
+  <div class="card">
+    <p>In one audit pass I ran <b>~1,100 configurations</b> of differential and invariant oracles across an ML stack — optimizers, metrics vs a reference implementation, adapter round-trips, kernel sanitizer sweeps, compiler-vs-eager, ODE solvers, quantization. <b>Result: clean.</b> One lead survived to T2 (a compiler reduction inexact on identical values) and I <em>didn't</em> file it, because it reproduces only in a harness and overlaps work already open upstream.</p>
+    <p class="muted">A well-measured "this isn't a bug," and a lead left unfiled because it didn't clear the bar, is principal-level judgment — and the honest counterweight to a list of wins. Negatives get reported the same way positives do.</p>
+  </div>
+
+  <h2>Working with AI, and verifying it</h2>
+  <p>I use AI assistance to find candidates fast, then <b>re-derive every bug myself</b> without the answer in front of me and prove it with a test that fails before the fix and passes after. The speed is the risk — the discipline is the point: you can't evaluate what you don't understand. Every fix above was human-reviewed before submission.</p>
+
+  <footer>
+    All figures live-verifiable via the GitHub API against <a href="https://github.com/tritsystem">@tritsystem</a>. Contributions counted only when merged; filed/open work labelled explicitly. No automated or unsolicited testing of any third party's systems — security findings follow each project's stated disclosure channel.
+  </footer>
+</main>
+</body>
+</html>

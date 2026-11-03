@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mastery: C · C++ · Python · Linux</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧰</text></svg>">
+<style>
+ :root{--bg:#fbfbfd;--fg:#1b1b1f;--muted:#64656d;--line:#e3e3e8;--card:#fff;--accent:#1f5fd0;--ok:#1f7a3a;--mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+ @media(prefers-color-scheme:dark){:root{--bg:#111216;--fg:#e9e9ee;--muted:#9aa0ac;--line:#262830;--card:#191b21;--accent:#7aa2ff;--ok:#6cc68a}}
+ *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+ header{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 12px;z-index:5}
+ h1{font-size:17px;margin:0 0 8px} .tabs{display:flex;gap:6px;flex-wrap:wrap} .tabs button{flex:1;min-width:64px;font:600 13px/1 inherit;padding:9px 6px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--fg)}
+ .tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+ .ov{display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12px;color:var(--muted)} .ovbar{flex:1;height:7px;background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:5px;overflow:hidden} .ovbar i{display:block;height:100%;background:var(--accent)}
+ main{padding:12px;max-width:760px;margin:0 auto}
+ .sec{margin:14px 0 4px;font:700 13px/1 var(--mono);color:var(--accent);text-transform:uppercase;letter-spacing:.5px;display:flex;justify-content:space-between}
+ .sec span{color:var(--muted);font-weight:400}
+ .item{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:11px 12px;margin:7px 0;display:flex;gap:10px;align-items:flex-start}
+ .item.done{opacity:.62} .cb{flex:none;width:22px;height:22px;border:2px solid var(--line);border-radius:6px;margin-top:1px;display:grid;place-items:center;cursor:pointer;font-size:14px;color:#fff}
+ .item.done .cb{background:var(--ok);border-color:var(--ok)} .body{flex:1;min-width:0} .t{font-weight:600;font-size:14.5px} .item.done .t{text-decoration:line-through}
+ .w{color:var(--muted);font-size:12.5px;margin-top:2px} code{font:12px var(--mono);background:color-mix(in srgb,var(--accent) 10%,transparent);padding:1px 4px;border-radius:4px}
+ .ask{margin-top:6px} .ask a{font:600 11.5px var(--mono);color:var(--accent);text-decoration:none;border:1px solid var(--line);padding:4px 8px;border-radius:7px;display:inline-block}
+ .foot{color:var(--muted);font-size:12px;margin:24px 0;text-align:center} #reset{font:inherit;padding:8px 12px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--muted)}
+</style></head><body>
+<header>
+ <h1>Mastery roadmap · C · C++ · Python · Linux</h1>
+ <div class="tabs" id="tabs"></div>
+ <div class="ov"><span id="ovlabel"></span><span class="ovbar"><i id="ovfill"></i></span><span id="ovpct"></span></div>
+</header>
+<main id="main"></main>
+<script>
+"use strict";
+// Each track: list of {sec, level, items:[{t, w}]}. id = track+index, stable by position.
+const DATA = {
+"C": [
+ {sec:"Fundamentals", items:[
+  {t:"Compile & run with gcc/clang", w:"<code>gcc f.c -o f && ./f</code>; know <code>-Wall -Wextra -g -O0</code> and why warnings matter."},
+  {t:"Integer types & sizes", w:"int/long/size_t/uint8_t; <code>sizeof</code>; signed vs unsigned; why width matters for overflow."},
+  {t:"printf/scanf & format specifiers", w:"%d %u %ld %p %s %x; a wrong specifier is undefined behaviour (and a bug class)."},
+  {t:"Control flow & functions", w:"if/for/while/switch; function declaration vs definition; return values; headers."},
+  {t:"Arrays & C strings", w:"arrays decay to pointers; strings are null-terminated char arrays; <code>strlen</code> walks to the \\0."},
+  {t:"Pointers & pointer arithmetic", w:"the core of C. <code>*p</code>, <code>&x</code>, <code>p+1</code> moves by sizeof(type). Master this or nothing else lands."},
+  {t:"structs, enums, typedef, unions", w:"grouping data; <code>-></code> vs <code>.</code>; unions overlap memory (a classic bug/feature)."},
+ ]},
+ {sec:"Memory (the heart of C security)", items:[
+  {t:"Stack vs heap", w:"locals live on the stack (auto-freed); <code>malloc</code> lives on the heap (you free it). Know the difference cold."},
+  {t:"malloc/calloc/realloc/free", w:"allocate, zero-allocate, resize, release. Always check the return for NULL (your miniUPnP fixes)."},
+  {t:"Buffer overflow", w:"writing past an array's end; corrupts adjacent memory. The #1 memory-safety bug."},
+  {t:"Use-after-free & double-free", w:"using/freeing memory after free (your CFEngine fix). Set pointers to NULL after free."},
+  {t:"NULL-dereference & checking allocs", w:"deref of NULL crashes; always check malloc/calloc results (your DeepSpeed/miniUPnP fixes)."},
+  {t:"Integer overflow in size math", w:"<code>n*itemsize</code> can wrap; under-allocate then overflow (your bitsandbytes class). Use checked arithmetic."},
+  {t:"Uninitialized reads", w:"reading memory you never wrote; garbage values. MemorySanitizer catches these (your libnatpmp find)."},
+ ]},
+ {sec:"Systems programming", items:[
+  {t:"File I/O: fopen vs open", w:"buffered stdio vs raw syscalls; read/write/close; <code>errno</code> on failure."},
+  {t:"errno & error handling", w:"check return values, read errno, <code>perror</code>/<code>strerror</code>. Error paths are where bugs hide."},
+  {t:"Processes: fork/exec/wait", w:"how Unix spawns programs; parent/child; zombie processes."},
+  {t:"Signals", w:"SIGINT/SIGSEGV/SIGKILL; signal handlers; why they must be async-safe."},
+  {t:"Pipes & basic sockets", w:"IPC between processes; TCP/UDP socket lifecycle (socket/bind/listen/accept)."},
+ ]},
+ {sec:"Tooling & security", items:[
+  {t:"Debug with gdb", w:"breakpoints, <code>bt</code> (backtrace), <code>print</code>, step; read a crash's stack frame."},
+  {t:"AddressSanitizer / UBSan", w:"<code>-fsanitize=address,undefined</code>; it names the exact faulting byte. Validate it on a planted bug first."},
+  {t:"valgrind memcheck", w:"finds leaks and bad accesses without recompiling; slower but thorough."},
+  {t:"Read a stack frame / calling convention", w:"how args/return addresses live on the stack — the basis of exploitation & defenses (ASLR, canaries)."},
+  {t:"Format-string vulnerabilities", w:"<code>printf(user_input)</code> is exploitable; always <code>printf(\"%s\", user_input)</code>."},
+  {t:"Makefiles & linking", w:"targets, headers, static vs dynamic libraries; separate compilation."},
+ ]},
+],
+"C++": [
+ {sec:"From C to C++", items:[
+  {t:"Classes, constructors, destructors", w:"bundle data+behaviour; ctor runs on create, dtor on destroy. The foundation of RAII."},
+  {t:"References vs pointers", w:"<code>int&</code> is an alias (can't be null, can't rebind); pointer can be null/reassigned."},
+  {t:"RAII (Resource Acquisition Is Initialization)", w:"tie a resource's lifetime to an object; the dtor frees it. The #1 C++ idea for avoiding leaks."},
+  {t:"namespaces & overloading", w:"avoid name clashes; same function name, different arg types."},
+ ]},
+ {sec:"Modern memory & objects", items:[
+  {t:"new/delete and why to avoid raw", w:"manual heap like malloc/free but type-aware; prefer smart pointers."},
+  {t:"Smart pointers: unique_ptr / shared_ptr", w:"automatic lifetime; unique = sole owner, shared = ref-counted. Kills most leaks/UAF."},
+  {t:"Move semantics & rvalue refs", w:"<code>std::move</code>, <code>&&</code>; transfer ownership without copying. Why modern C++ is fast."},
+  {t:"Rule of 0/3/5", w:"if you manage a resource you need dtor+copy+move; usually better to manage none (rule of 0)."},
+ ]},
+ {sec:"STL & generics", items:[
+  {t:"vector, string, array", w:"dynamic array, text, fixed array; <code>.at()</code> bounds-checks, <code>[]</code> does not (a bug source)."},
+  {t:"map, unordered_map, set", w:"ordered tree vs hash table; key/value and unique-element containers."},
+  {t:"iterators & iterator invalidation", w:"how you traverse containers; mutating a container can invalidate iterators (a real bug class)."},
+  {t:"algorithms: sort/find/transform", w:"<code>&lt;algorithm&gt;</code>; write intent, not loops."},
+  {t:"templates & generic code", w:"write once, work for any type; the basis of the STL."},
+ ]},
+ {sec:"Correctness & modern C++", items:[
+  {t:"Inheritance, virtual, polymorphism", w:"base/derived; virtual functions dispatch at runtime; a virtual dtor is required for base pointers."},
+  {t:"Exceptions & RAII safety", w:"throw/try/catch; why RAII makes exception-safe cleanup automatic."},
+  {t:"const correctness", w:"mark what you won't change; the compiler enforces it; a design + safety tool."},
+  {t:"Lambdas & std::function", w:"inline anonymous functions and captures; everywhere in modern C++."},
+  {t:"C++11→20 essentials", w:"<code>auto</code>, range-for, <code>nullptr</code>, <code>constexpr</code>, structured bindings, <code>std::optional</code>."},
+ ]},
+],
+"Python": [
+ {sec:"Fundamentals", items:[
+  {t:"Run scripts & the REPL", w:"<code>python f.py</code>; <code>python -i</code>; <code>-I</code> for isolated (safe when files are untrusted)."},
+  {t:"Core types", w:"int/float/str/bool/None; dynamic typing; everything is an object."},
+  {t:"Data structures: list/dict/tuple/set", w:"mutable list, key→value dict, immutable tuple, unique set. Know when to use each."},
+  {t:"Mutability & is vs ==", w:"<code>is</code> compares identity (same object), <code>==</code> compares value. The PyJWT bug lives here."},
+  {t:"Control flow & comprehensions", w:"if/for/while; <code>[x for x in xs if ...]</code> — Pythonic and fast."},
+  {t:"f-strings & slicing", w:"<code>f\"{x}\"</code>; <code>s[1:4]</code>, <code>xs[::-1]</code>; off-by-ones live in slices."},
+ ]},
+ {sec:"Functions & structure", items:[
+  {t:"Functions, *args, **kwargs", w:"default args (beware mutable defaults!), arbitrary args; the mutable-default gotcha is a real bug."},
+  {t:"Classes & the data model", w:"<code>class</code>, <code>__init__</code>, <code>self</code>, dunder methods (<code>__eq__</code>, <code>__repr__</code>)."},
+  {t:"Modules, imports, packages", w:"how code is organized; <code>import</code>; <code>__name__ == \"__main__\"</code>; import side effects."},
+  {t:"Exceptions: try/except/finally", w:"catch specific exceptions; <code>finally</code> always runs; don't bare-except."},
+  {t:"Context managers (with)", w:"<code>with open(...) as f:</code> auto-closes; write your own with <code>__enter__/__exit__</code>."},
+  {t:"Generators & iterators", w:"<code>yield</code>; lazy sequences; memory-efficient streaming."},
+  {t:"Decorators", w:"functions that wrap functions; <code>@decorator</code>; how frameworks add behaviour."},
+ ]},
+ {sec:"Standard library (a security toolkit)", items:[
+  {t:"os, sys, pathlib", w:"environment, args, filesystem paths done right."},
+  {t:"subprocess (safely)", w:"run programs; <code>shell=True</code> is a command-injection footgun; pass arg lists."},
+  {t:"re (regular expressions)", w:"pattern matching; catastrophic backtracking is a DoS class."},
+  {t:"json & parsing untrusted input", w:"parse/serialize; never <code>eval()</code> untrusted data — use json/ast."},
+  {t:"argparse", w:"real command-line tools with flags and help."},
+  {t:"collections & itertools", w:"Counter, defaultdict, deque; combinatorics and grouping."},
+  {t:"hashlib, hmac, secrets", w:"hashing, message auth, secure random — the right primitives, not <code>random</code>."},
+ ]},
+ {sec:"Mastery & security", items:[
+  {t:"venv & pip", w:"isolated environments; pin dependencies; supply-chain awareness."},
+  {t:"Type hints & mypy", w:"<code>def f(x: int) -> str</code>; catch bugs before running."},
+  {t:"Testing with pytest", w:"write a test that fails before a fix and passes after (your T4 discipline)."},
+  {t:"ast module (safe eval)", w:"parse code without running it; build a safe expression evaluator (like Baton's)."},
+  {t:"ctypes / cffi (call C from Python)", w:"the FFI boundary — where Python meets native code and bugs cross over."},
+  {t:"Write a PoC/exploit script", w:"use <code>requests</code> to reproduce a web vuln end-to-end (your MLflow repro)."},
+ ]},
+],
+"Linux": [
+ {sec:"Shell basics", items:[
+  {t:"Navigate: cd, ls, pwd, tree", w:"move around the filesystem; <code>ls -la</code> shows hidden files + permissions."},
+  {t:"Files: cp, mv, rm, mkdir, touch", w:"create/move/delete; <code>rm -rf</code> is irreversible — respect it."},
+  {t:"View: cat, less, head, tail -f", w:"read files; <code>tail -f</code> follows a growing log live."},
+  {t:"Pipes & redirection", w:"<code>|</code> chains commands; <code>&gt;</code> <code>&gt;&gt;</code> <code>2&gt;&amp;1</code> redirect output/errors. The Unix superpower."},
+  {t:"Wildcards & globbing", w:"<code>*.c</code>, <code>?</code>, <code>{a,b}</code>; how the shell expands patterns before a command runs."},
+ ]},
+ {sec:"Text processing (the core skill)", items:[
+  {t:"grep (and -r -i -n -E)", w:"search text/code fast; recursive, case-insensitive, regex. You'll live in grep."},
+  {t:"sed (stream edit)", w:"find/replace in a stream or file; <code>sed 's/a/b/g'</code>."},
+  {t:"awk (field processing)", w:"columnar data; <code>awk '{print $2}'</code>; mini-language for tables."},
+  {t:"sort, uniq, wc, cut, tr", w:"sort lines, dedup, count, cut columns, translate chars — composable building blocks."},
+ ]},
+ {sec:"Permissions & processes", items:[
+  {t:"Permissions: chmod, chown, the bits", w:"<code>rwx</code> for user/group/other; <code>chmod 755</code>; what each bit means."},
+  {t:"Users, groups, sudo", w:"identity and privilege; <code>sudo</code> boundary; why least-privilege matters."},
+  {t:"SUID/SGID & privilege boundaries", w:"programs that run as another user; a classic local-privesc attack surface."},
+  {t:"Processes: ps, top, htop, kill", w:"what's running; send signals; <code>kill -9</code> is the last resort."},
+  {t:"Jobs: &, fg, bg, nohup, jobs", w:"background/foreground control; keep a job alive after logout."},
+ ]},
+ {sec:"System & networking", items:[
+  {t:"Filesystem layout: /etc /proc /var /tmp", w:"where config, kernel state, logs, and scratch live. <code>/proc</code> is the kernel as files."},
+  {t:"systemctl & journalctl", w:"manage services; read logs. <code>journalctl -u svc -f</code>."},
+  {t:"Package managers (apt/dnf)", w:"install/update software; where binaries and libs come from (supply chain)."},
+  {t:"Networking: ss, curl, ssh, ports", w:"what's listening (<code>ss -tlnp</code>), make requests, remote login, understand ports."},
+  {t:"Inspect a process: strace, ltrace, lsof", w:"watch syscalls, library calls, open files — how you reverse a program's behaviour."},
+  {t:"cron & env (PATH, variables)", w:"scheduled jobs; how <code>$PATH</code> resolves commands (and how PATH hijacking works)."},
+ ]},
+ {sec:"Bash scripting", items:[
+  {t:"Script structure & shebang", w:"<code>#!/usr/bin/env bash</code>; <code>set -euo pipefail</code> for safety; exit codes."},
+  {t:"Variables, quoting, conditionals", w:"<code>\"$var\"</code> quoting prevents word-splitting bugs; <code>if [ ... ]</code>; <code>[[ ... ]]</code>."},
+  {t:"Loops & functions", w:"<code>for</code>/<code>while</code>; functions; process substitution; writing a real automation script."},
+ ]},
+],
+};
+const TRACKS = Object.keys(DATA);
+const KEY = "mastery.v1";
+const store = JSON.parse(localStorage.getItem(KEY) || "{}");
+const save = ()=>localStorage.setItem(KEY, JSON.stringify(store));
+let active = TRACKS[0];
+const $ = id=>document.getElementById(id);
+
+function askUrl(track, t, w){
+  const clean = w.replace(/<[^>]+>/g,"");
+  const p = `Teach me this ${track} skill in depth, as if I'm serious about mastering it for security engineering. Topic: "${t}". Context: ${clean}. Explain the ins and outs with small examples I can run on my phone or a Linux box, point out the common mistakes and the security angle, then give me 2 quick practice tasks to prove I've got it.`;
+  return "https://claude.ai/new?q=" + encodeURIComponent(p);
+}
+function counts(track){
+  let n=0,d=0;
+  DATA[track].forEach((s,si)=>s.items.forEach((_,ii)=>{n++; if(store[`${track}.${si}.${ii}`]) d++;}));
+  return [d,n];
+}
+function renderTabs(){
+  $("tabs").innerHTML = TRACKS.map(t=>{const [d,n]=counts(t);return `<button data-t="${t}" class="${t===active?'on':''}">${t} ${d}/${n}</button>`}).join("");
+  $("tabs").querySelectorAll("button").forEach(b=>b.onclick=()=>{active=b.dataset.t;renderAll();});
+}
+function renderOverall(){
+  let d=0,n=0; TRACKS.forEach(t=>{const [a,b]=counts(t);d+=a;n+=b;});
+  $("ovlabel").textContent="Overall"; $("ovfill").style.width=(100*d/n)+"%"; $("ovpct").textContent=`${d}/${n} · ${Math.round(100*d/n)}%`;
+}
+function renderMain(){
+  const track=active;
+  $("main").innerHTML = DATA[track].map((s,si)=>{
+    const [sd,sn]=[s.items.filter((_,ii)=>store[`${track}.${si}.${ii}`]).length, s.items.length];
+    const items = s.items.map((it,ii)=>{
+      const id=`${track}.${si}.${ii}`, done=!!store[id];
+      return `<div class="item ${done?'done':''}" data-id="${id}">
+        <div class="cb">${done?'✓':''}</div>
+        <div class="body"><div class="t">${it.t}</div><div class="w">${it.w}</div>
+        <div class="ask"><a href="${askUrl(track,it.t,it.w)}" target="_blank" rel="noopener">Ask Claude to teach me</a></div></div></div>`;
+    }).join("");
+    return `<div class="sec">${s.sec}<span>${sd}/${sn}</span></div>${items}`;
+  }).join("") + `<div class="foot"><button id="reset">Reset all progress</button></div>`;
+  $("main").querySelectorAll(".item").forEach(el=>{
+    el.querySelector(".cb").onclick=()=>{const id=el.dataset.id; store[id]=!store[id]; if(!store[id])delete store[id]; save(); renderAll();};
+  });
+  $("reset").onclick=()=>{ if(confirm("Erase all progress on this device?")){ localStorage.removeItem(KEY); for(const k in store)delete store[k]; renderAll(); } };
+}
+function renderAll(){ renderTabs(); renderOverall(); renderMain(); }
+renderAll();
+window.MR = {DATA, counts};
+</script></body></html>

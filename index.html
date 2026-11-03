@@ -35,13 +35,13 @@
 <body>
 <main>
   <h1>Finding real bugs, and proving they're real</h1>
-  <p class="lede">A security &amp; correctness track record built on verifiable evidence — merged fixes, a stated evidence bar, and honest negatives.</p>
+  <p class="lede">A security &amp; correctness track record built on verifiable evidence — a published CVE, merged fixes, a stated evidence bar, and honest negatives.</p>
   <p class="muted">GitHub: <a href="https://github.com/tritsystem">@tritsystem</a> · every claim below links to the public artifact.</p>
 
   <div class="grid">
+    <div class="stat"><b><a href="https://github.com/advisories/GHSA-gvp8-978c-rx2q">CVE-2026-103001</a></b><span>published CVE in PyJWT · CVSS 6.5</span></div>
     <div class="stat"><b>35</b><span>PRs merged into others' projects</span></div>
     <div class="stat"><b>16</b><span>distinct open-source projects</span></div>
-    <div class="stat"><b>C · CUDA · Python · Go</b><span>languages across the fixes</span></div>
   </div>
   <p class="muted" style="font-size:13px">Counts are live-verifiable: <code>gh search prs --author tritsystem --merged</code>. Open/filed work is labelled as such below — only merged PRs are counted as contributions.</p>
 
@@ -70,6 +70,12 @@
   <p>Two rules sit underneath it: <b>validate the instrument first</b> (a sanitizer or oracle must fire on a planted bug and stay silent on clean code before I trust its silence), and <b>match the tool to the bug class</b> (AddressSanitizer misses an in-buffer uninitialized read; MemorySanitizer catches it).</p>
 
   <h2>Selected work, told in tier language</h2>
+
+  <div class="card" style="border-color:var(--accent)">
+    <h3>Silent claim-verification bypass in PyJWT <span class="tier">CVE-2026-103001 · CVSS 6.5 · published</span></h3>
+    <div class="meta"><a href="https://github.com/advisories/GHSA-gvp8-978c-rx2q">GHSA-gvp8-978c-rx2q</a> · CWE-471 · credited reporter · PyJWT (tens of millions of downloads)</div>
+    <p><code>PyJWT.decode()</code> mutated the caller's <code>options</code> dict in place, so a dict reused across calls could silently drop claim verification on the second use — a regression of a previously-fixed issue (#679). An authentication-library bug with no crash and no error: exactly the silent-integrity class. Reported through the private advisory channel, fixed upstream, CVE assigned and published, credit accepted.</p>
+  </div>
 
   <div class="card">
     <h3>Use-after-free &amp; double-free in a config-management core <span class="tier">T4 · merged</span></h3>

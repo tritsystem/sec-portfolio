@@ -1,0 +1,116 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 837639c5..a9bd5562 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -7,6 +7,18 @@ For older releases, see the historical fatal-bug record in
+ [bugs.md](https://github.com/fangwei123456/spikingjelly/blob/master/bugs.md)
+ and the archived documentation linked from the project README.
+ 
++## Unreleased
++
++### Improvements
++
++#### Stateful Modules
++
++Module: `spikingjelly.activation_based.base`.
++
++- Fixed `MemoryModule` tensor reset values to follow module device and dtype
++  conversions, so `reset()` no longer restores tensors on the previous device or
++  with the previous dtype.
++
+ ## 2.0.0rc1 - 2026-08-29
+ 
+ ### Features
+diff --git a/docs/source/changelog.rst b/docs/source/changelog.rst
+index e29595ac..ffb8a4fa 100644
+--- a/docs/source/changelog.rst
++++ b/docs/source/changelog.rst
+@@ -12,6 +12,21 @@ For older releases, see the historical fatal-bug record in
+ `bugs.md <https://github.com/fangwei123456/spikingjelly/blob/master/bugs.md>`__
+ and the archived documentation linked from the project README.
+ 
++Unreleased
++----------
++
++Improvements
++~~~~~~~~~~~~
++
++Stateful Modules
++^^^^^^^^^^^^^^^^
++
++Module: ``spikingjelly.activation_based.base``.
++
++- Fixed ``MemoryModule`` tensor reset values to follow module device and dtype
++  conversions, so ``reset()`` no longer restores tensors on the previous device or
++  with the previous dtype.
++
+ 2.0.0rc1 - 2026-08-29
+ ---------------------
+ 
+diff --git a/spikingjelly/activation_based/base.py b/spikingjelly/activation_based/base.py
+index bf6c6332..cbdf2db6 100644
+--- a/spikingjelly/activation_based/base.py
++++ b/spikingjelly/activation_based/base.py
+@@ -1117,6 +1117,12 @@ def _apply(self, fn):
+         for key, value in self._memories.items():
+             if isinstance(value, torch.Tensor):
+                 self._memories[key] = fn(value)
++        # Move tensor reset values with the module as well; otherwise
++        # .to()/.cuda()/.half() would leave them on the old device/dtype
++        # and the next reset() would restore the state there.
++        for key, value in self._memories_rv.items():
++            if isinstance(value, torch.Tensor):
++                self._memories_rv[key] = fn(value)
+         return super()._apply(fn)
+ 
+     def _replicate_for_data_parallel(self):
+diff --git a/test/activation_based/test_memory.py b/test/activation_based/test_memory.py
+index e7ba114f..7bb28515 100644
+--- a/test/activation_based/test_memory.py
++++ b/test/activation_based/test_memory.py
+@@ -558,3 +558,45 @@ def single_step_forward(self, x):
+         functional_forward((torch.tensor(1.0),), (torch.tensor(3.0),))
+ 
+     torch.testing.assert_close(module.state, torch.tensor(7.0))
++
++
++def test_apply_moves_tensor_reset_values_dtype():
++    """.half()/.double() must move tensor reset values too, so a later
++    reset() restores the state in the module's current dtype rather than
++    the dtype the reset value had when it was registered."""
++
++    class Node(base.MemoryModule):
++        def __init__(self):
++            super().__init__()
++            self.register_memory("s", torch.zeros(4))
++
++        def single_step_forward(self, x):
++            self.s = self.s + x
++            return self.s
++
++    net = Node().double()
++    net.reset()
++    assert net.s.dtype == torch.float64
++
++    net = Node()
++    net.set_reset_value("s", torch.zeros(4))
++    net.half()
++    net.reset()
++    assert net.s.dtype == torch.float16
++
++
++@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
++def test_apply_moves_tensor_reset_values_device():
++    class Node(base.MemoryModule):
++        def __init__(self):
++            super().__init__()
++            self.register_memory("s", torch.zeros(4))
++
++        def single_step_forward(self, x):
++            self.s = self.s + x
++            return self.s
++
++    net = Node().cuda()
++    net.reset()
++    assert net.s.is_cuda
++    net(torch.ones(4, device="cuda"))  # no cross-device RuntimeError

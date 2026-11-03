@@ -1,0 +1,127 @@
+diff --git a/snntorch/_neurons/leaky.py b/snntorch/_neurons/leaky.py
+index 97c72f09..e0e8437e 100644
+--- a/snntorch/_neurons/leaky.py
++++ b/snntorch/_neurons/leaky.py
+@@ -17,12 +17,13 @@ class Leaky(LIF):
+ 
+             U[t+1] = βU[t] + I_{\\rm in}[t+1] - RU_{\\rm thr}
+ 
+-    If `reset_mechanism = "zero"`, then :math:`U[t+1]` will be set to `0`
+-    whenever the neuron emits a spike:
++    If `reset_mechanism = "zero"`, then :math:`U[t]` is set to `0` whenever
++    the neuron emitted a spike on the previous step, before the new input
++    is integrated:
+ 
+     .. math::
+ 
+-            U[t+1] = βU[t] + I_{\\rm syn}[t+1] - R(βU[t] + I_{\\rm in}[t+1])
++            U[t+1] = β(1-R)U[t] + I_{\\rm in}[t+1]
+ 
+     * :math:`I_{\\rm in}` - Input current
+     * :math:`U` - Membrane potential
+diff --git a/snntorch/_neurons/leakyparallel.py b/snntorch/_neurons/leakyparallel.py
+index 66fb8c97..11374560 100644
+--- a/snntorch/_neurons/leakyparallel.py
++++ b/snntorch/_neurons/leakyparallel.py
+@@ -291,15 +291,29 @@ def _beta_to_weight_hh(self):
+                 elif isinstance(self.beta, torch.Tensor) or isinstance(
+                     self.beta, torch.FloatTensor
+                 ):
++                    # `_beta_buffer` always stores beta as a tensor, so the
++                    # length checks must be nested inside this branch --
++                    # they were previously siblings of this `elif`, which
++                    # made the per-neuron (`len == hidden_size`) path and
++                    # the `ValueError` unreachable, so a per-neuron beta
++                    # was dropped silently and `weight_hh_l0` kept its
++                    # random RNN initialization.
+                     if len(self.beta) == 1:
+                         self.rnn.weight_hh_l0.fill_(self.beta[0])
+-                elif len(self.beta) == self.hidden_size:
+-                    # Replace each value with the corresponding value in self.beta
+-                    for i in range(self.hidden_size):
+-                        self.rnn.weight_hh_l0.data[i].fill_(self.beta[i])
++                    elif len(self.beta) == self.hidden_size:
++                        # Replace each value with the corresponding value
++                        # in self.beta
++                        for i in range(self.hidden_size):
++                            self.rnn.weight_hh_l0.data[i].fill_(self.beta[i])
++                    else:
++                        raise ValueError(
++                            "Beta must be either a single value or of "
++                            "length 'hidden_size'."
++                        )
+                 else:
+-                    raise ValueError(
+-                        "Beta must be either a single value or of length 'hidden_size'."
++                    raise TypeError(
++                        "Beta must be a float, int, or torch.Tensor; "
++                        f"got {type(self.beta)}."
+                     )
+ 
+     def _beta_buffer(self, beta, learn_beta):
+diff --git a/tests/test_snntorch/test_leakyparallel.py b/tests/test_snntorch/test_leakyparallel.py
+new file mode 100644
+index 00000000..63f8f800
+--- /dev/null
++++ b/tests/test_snntorch/test_leakyparallel.py
+@@ -0,0 +1,60 @@
++#!/usr/bin/env python
++
++"""Tests for LeakyParallel neuron."""
++
++import pytest
++import snntorch as snn
++import torch
++
++
++class TestLeakyParallel:
++    def test_leakyparallel_scalar_beta_sets_diagonal(self):
++        lp = snn.LeakyParallel(input_size=4, hidden_size=6, beta=0.42)
++        diag = torch.diagonal(lp.rnn.weight_hh_l0.detach())
++        assert torch.allclose(diag, torch.full((6,), 0.42), atol=1e-6)
++
++    def test_leakyparallel_per_neuron_beta_sets_diagonal(self):
++        """Regression: a per-neuron ``beta`` (length == hidden_size) must be
++        written to the diagonal of ``weight_hh_l0``. It was previously
++        dropped silently -- the length check was unreachable -- so the
++        layer kept the RNN's random recurrent init."""
++        beta = torch.linspace(0.1, 0.9, 6)
++        lp = snn.LeakyParallel(input_size=4, hidden_size=6, beta=beta)
++        whh = lp.rnn.weight_hh_l0.detach()
++        assert torch.allclose(torch.diagonal(whh), beta, atol=1e-6)
++        # weight_hh is forced diagonal by default
++        off_diag = whh - torch.diag(torch.diagonal(whh))
++        assert off_diag.abs().max().item() == 0.0
++
++    def test_leakyparallel_length_one_beta_tensor(self):
++        lp = snn.LeakyParallel(
++            input_size=4, hidden_size=6, beta=torch.tensor([0.3])
++        )
++        diag = torch.diagonal(lp.rnn.weight_hh_l0.detach())
++        assert torch.allclose(diag, torch.full((6,), 0.3), atol=1e-6)
++
++    def test_leakyparallel_bad_beta_length_raises(self):
++        with pytest.raises(ValueError):
++            snn.LeakyParallel(
++                input_size=4, hidden_size=6, beta=torch.tensor([0.3, 0.4])
++            )
++
++    def test_leakyparallel_per_neuron_beta_drives_recurrence(self):
++        """With ``weight_hh`` diagonal, the per-neuron beta *is* the
++        recurrent decay. Two layers identical except for beta -- inputs,
++        ``weight_ih`` and both biases shared -- must produce different
++        outputs. Without the per-neuron beta being written, both layers
++        run at the same (default) recurrent weights and this fails."""
++        torch.manual_seed(0)
++        x = torch.rand(8, 2, 4) * 3.0
++        a = snn.LeakyParallel(
++            input_size=4, hidden_size=6, beta=torch.full((6,), 0.05)
++        )
++        b = snn.LeakyParallel(
++            input_size=4, hidden_size=6, beta=torch.full((6,), 0.95)
++        )
++        b.load_state_dict(a.state_dict())  # copy everything...
++        b._beta_buffer(torch.full((6,), 0.95), learn_beta=False)
++        b._beta_to_weight_hh()  # ...then set only b's recurrent weights from its beta
++        with torch.no_grad():
++            assert not torch.equal(a(x), b(x))

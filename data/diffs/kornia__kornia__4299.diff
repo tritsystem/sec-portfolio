@@ -1,0 +1,120 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 390daea9e1..b7f4b41ae6 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -335,6 +335,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+   the only one. `kornia.feature.lightglue.Attention.enable_flash`, the attribute that combined the
+   constructor argument with the probe result (and so always equalled the argument, because SDPA is
+   present on every supported torch), was renamed to `Attention.allow_flash`. (#4287)
++* `solve_cubic`'s `D <= 0` (three-real-roots) branch no longer returns `nan` gradients for a
++  repeated or near-repeated real root (#4290, #4299). It differentiates `acos(R / sqrt(-Q3))`, whose own
++  derivative `-1/sqrt(1-x^2)` is unbounded at `x = +-1`; the branch condition guarantees the ratio
++  lies in `[-1, 1]`, but a repeated or near-repeated root pushes it to exactly that boundary,
++  where the value is correct but the derivative diverges. A double-root quartic reaches this
++  through `solve_quartic`'s resolvent cubic routinely, not as an edge case: measured on 20,000
++  random real-rooted quartics, 10.7% hit a non-finite gradient or a disconnected graph overall,
++  35.3% for exact double-root pairs specifically. Same failure shape as the `acos`/`asin`
++  boundary in `quaternion_exp_to_log`/`euler_from_quaternion` (#4007, fixed in #4228) — this is a
++  different call site, not covered by that fix, using the same guard: differentiate a substituted
++  safe argument, take the value from a detached copy of the real (possibly boundary) argument.
++  Forward values are unchanged; re-running the same 20,000-trial search with the fix applied
++  drops the failure count to 1,269 — a real, separate residual (a disconnected-graph case with
++  two simultaneous double-root pairs) remains and is tracked in #4290, not fixed here.
+ 
+ * `RandAugment`, `AutoAugment`, `TrivialAugment` and `AugMix` no longer silently upcast half-precision
+   batches to `float32`. `OperationBase.forward` — the shared gate every auto-augment op routes through —
+diff --git a/kornia/geometry/solvers/polynomial_solver.py b/kornia/geometry/solvers/polynomial_solver.py
+index 931c54c6bb..3a594f8beb 100644
+--- a/kornia/geometry/solvers/polynomial_solver.py
++++ b/kornia/geometry/solvers/polynomial_solver.py
+@@ -106,6 +106,12 @@ def solve_cubic(coeffs: torch.Tensor) -> torch.Tensor:
+        roots should be represented as 0. Thus, the output for a single real root should be in the
+        format [real_root, 0, 0], and for two real roots, it should be [real_root_1, real_root_2, 0].
+ 
++    .. note::
++       At the acos boundary reached by a repeated (or near-repeated) real root, backward suppresses
++       the derivative of the acos argument to keep gradients finite. Repeated-root derivatives are
++       undefined; this is a surrogate convention, not a mathematical Jacobian. :func:`solve_quartic`
++       inherits this convention wherever it falls back to :func:`solve_cubic`.
++
+     """
+     KORNIA_CHECK_SHAPE(coeffs, ["B", "4"])
+ 
+@@ -179,7 +185,20 @@ def solve_cubic(coeffs: torch.Tensor) -> torch.Tensor:
+     mask_D_zero_solutions = (a_D_zero <= 0) & (a_Q_zero != 0)
+ 
+     if torch.any(mask_D_zero):
+-        theta_D_zero = torch.acos(R[mask_D_zero] / torch.sqrt(-Q3[mask_D_zero]))
++        # d(acos)/dx = -1/sqrt(1-x^2) is unbounded at x = +-1. The branch condition (D <= 0)
++        # guarantees |ratio_D_zero| <= 1 (D = Q3 + R^2 <= 0 implies R^2 <= -Q3), but a repeated
++        # or near-repeated real root pushes the ratio to exactly that boundary, where the
++        # *value* is fine but the *derivative* diverges -- same shape as the acos/asin boundary
++        # in quaternion_exp_to_log/euler_from_quaternion (#4007, fixed in #4228). A plain
++        # `.clamp(-1, 1)` does not help here: it only guards the value, not the diverging
++        # derivative of a value already inside the domain. Route the boundary through `.acos()`
++        # on a detached copy for the value and through `.acos()` on a substituted safe argument
++        # for the gradient, so autograd never differentiates `acos` at +-1 at all.
++        ratio_D_zero = R[mask_D_zero] / torch.sqrt(-Q3[mask_D_zero])
++        ratio_D_zero = torch.clamp(ratio_D_zero, min=-1.0, max=1.0)
++        at_boundary_D_zero = ratio_D_zero.abs() >= 1.0
++        safe_ratio_D_zero = torch.where(at_boundary_D_zero, torch.zeros_like(ratio_D_zero), ratio_D_zero)
++        theta_D_zero = torch.where(at_boundary_D_zero, ratio_D_zero.detach().acos(), safe_ratio_D_zero.acos())
+         sqrt_Q_D_zero = torch.sqrt(-Q[mask_D_zero])
+         x0_D_zero = 2 * sqrt_Q_D_zero * torch.cos(theta_D_zero / 3.0) - b_a_3[mask_D_zero]
+         x1_D_zero = 2 * sqrt_Q_D_zero * torch.cos((theta_D_zero + 2 * _PI) / 3.0) - b_a_3[mask_D_zero]
+@@ -232,6 +251,11 @@ def solve_quartic(coeffs: torch.Tensor) -> torch.Tensor:
+        In cases where a quartic polynomial has fewer than four real roots, the remaining entries
+        in the output are set to 0. Similarly, any non-real (complex) roots are represented as 0.
+        This is done to maintain a consistent output shape for all cases.
++
++    .. note::
++       For a repeated (or near-repeated) real root, the resolvent-cubic solve internally
++       delegates to :func:`solve_cubic`'s finite-but-surrogate boundary-gradient convention;
++       see that function's docstring for details.
+     """
+     KORNIA_CHECK_SHAPE(coeffs, ["B", "5"])
+ 
+diff --git a/tests/geometry/solvers/test_polynomial_solver.py b/tests/geometry/solvers/test_polynomial_solver.py
+index 53bb38643a..61a3752c9c 100644
+--- a/tests/geometry/solvers/test_polynomial_solver.py
++++ b/tests/geometry/solvers/test_polynomial_solver.py
+@@ -91,6 +91,39 @@ def test_gradcheck(self, device):
+         coeffs = torch.tensor([[2.0, 3.0, -11.0, -6.0]], device=device, dtype=torch.float64, requires_grad=True)
+         self.gradcheck(solver.solve_cubic, (coeffs,))
+ 
++    def test_convention_gradient_is_finite_at_the_acos_boundary_4290(self, device, dtype):
++        # #4290: d(acos)/dx = -1/sqrt(1-x^2) is unbounded at x = +-1. solve_cubic's D<=0
++        # branch computes acos(R / sqrt(-Q3)); the branch condition guarantees the ratio is in
++        # [-1, 1], but a cubic with a repeated or near-repeated root pushes it to exactly that
++        # boundary, where the VALUE is fine but the DERIVATIVE diverges -- same shape as the
++        # acos/asin boundary in quaternion_exp_to_log/euler_from_quaternion (#4007, fixed in
++        # #4228), a different call site not covered by that fix.
++        #
++        # This resolvent cubic comes from kornia's OWN existing double-root quartic fixture
++        # (TestQuarticSolver.test_solve_quartic, "Case 3: Double Roots": (x-2)^2(x-3)(x+1),
++        # coeffs [1, -6, 9, 4, -12]) -- already in the suite, already passes on forward value,
++        # because that test never calls .backward(). It fails immediately if you do.
++        coeffs = torch.tensor([[1.0, -6.0, 9.0, 4.0, -12.0]], device=device, dtype=dtype, requires_grad=True)
++        roots = solver.solve_quartic(coeffs)
++        roots.sum().backward()
++        assert bool(torch.isfinite(coeffs.grad).all()), coeffs.grad
++
++        # The forward value is unaffected by the gradient guard: unchanged, sorted match to the
++        # documented roots -1, 2, 2, 3.
++        expected = torch.tensor([[-1.0, 2.0, 2.0, 3.0]], device=device, dtype=dtype)
++        roots_sorted, _ = torch.sort(roots.detach(), dim=-1)
++        expected_sorted, _ = torch.sort(expected, dim=-1)
++        self.assert_close(roots_sorted, expected_sorted, rtol=1e-3, atol=1e-3)
++
++        # Second, independent repeated-root cubic exercising solve_cubic directly (not via a
++        # quartic's resolvent): (x-1)^2(x-4) = x^3 - 6x^2 + 9x - 4. Verified this lands exactly
++        # at the acos boundary (Q=-1, R=1, Q3=-1, D=Q3+R^2=0, ratio=R/sqrt(-Q3)=1.0 exactly) via
++        # the D<=0 branch (Q != 0, so this is not the separate Q==0-and-R==0 triple-root path).
++        cubic_coeffs = torch.tensor([[1.0, -6.0, 9.0, -4.0]], device=device, dtype=dtype, requires_grad=True)
++        cubic_roots = solver.solve_cubic(cubic_coeffs)
++        cubic_roots.sum().backward()
++        assert bool(torch.isfinite(cubic_coeffs.grad).all()), cubic_coeffs.grad
++
+ 
+ class TestMultiplyDegOnePoly(BaseTester):
+     def test_smoke(self, device, dtype):

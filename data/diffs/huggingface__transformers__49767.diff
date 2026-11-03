@@ -1,0 +1,220 @@
+diff --git a/src/transformers/models/deepseek_vl/image_processing_deepseek_vl.py b/src/transformers/models/deepseek_vl/image_processing_deepseek_vl.py
+index 22ff76aa740d..b4c25a08fc9f 100644
+--- a/src/transformers/models/deepseek_vl/image_processing_deepseek_vl.py
++++ b/src/transformers/models/deepseek_vl/image_processing_deepseek_vl.py
+@@ -55,11 +55,11 @@ class DeepseekVLImageProcessor(TorchvisionBackend):
+ 
+     def __init__(self, **kwargs: Unpack[DeepseekVLImageProcessorKwargs]):
+         super().__init__(**kwargs)
+-        if kwargs.get("image_mean") is None:
+-            background_color = (127, 127, 127)
++        image_mean = getattr(self, "image_mean", None)
++        if image_mean is None:
++            self.background_color = (127, 127, 127)
+         else:
+-            background_color = tuple(int(x * 255) for x in kwargs.get("image_mean"))
+-        self.background_color = tuple(background_color)
++            self.background_color = tuple(int(x * 255) for x in image_mean)
+ 
+     def resize(
+         self,
+diff --git a/src/transformers/models/deepseek_vl_hybrid/image_processing_deepseek_vl_hybrid.py b/src/transformers/models/deepseek_vl_hybrid/image_processing_deepseek_vl_hybrid.py
+index b8915959f5be..8776fb585329 100644
+--- a/src/transformers/models/deepseek_vl_hybrid/image_processing_deepseek_vl_hybrid.py
++++ b/src/transformers/models/deepseek_vl_hybrid/image_processing_deepseek_vl_hybrid.py
+@@ -77,17 +77,17 @@ class DeepseekVLHybridImageProcessor(TorchvisionBackend):
+     model_input_names = ["pixel_values", "high_res_pixel_values"]
+ 
+     def __init__(self, **kwargs: Unpack[DeepseekVLHybridImageProcessorKwargs]):
+-        if kwargs.get("image_mean") is None:
+-            background_color = (127, 127, 127)
++        super().__init__(**kwargs)
++        image_mean = getattr(self, "image_mean", None)
++        if image_mean is None:
++            self.background_color = (127, 127, 127)
+         else:
+-            background_color = tuple(int(x * 255) for x in kwargs.get("image_mean"))
+-        if kwargs.get("high_res_image_mean") is None:
+-            high_res_background_color = (127, 127, 127)
++            self.background_color = tuple(int(x * 255) for x in image_mean)
++        high_res_image_mean = getattr(self, "high_res_image_mean", None)
++        if high_res_image_mean is None:
++            self.high_res_background_color = (127, 127, 127)
+         else:
+-            high_res_background_color = tuple(int(x * 255) for x in kwargs.get("high_res_image_mean"))
+-        super().__init__(**kwargs)
+-        self.background_color = tuple(background_color)
+-        self.high_res_background_color = tuple(high_res_background_color)
++            self.high_res_background_color = tuple(int(x * 255) for x in high_res_image_mean)
+ 
+     def resize(
+         self,
+diff --git a/src/transformers/models/deepseek_vl_hybrid/image_processing_pil_deepseek_vl_hybrid.py b/src/transformers/models/deepseek_vl_hybrid/image_processing_pil_deepseek_vl_hybrid.py
+index 57b516bbadc7..bab72499dd06 100644
+--- a/src/transformers/models/deepseek_vl_hybrid/image_processing_pil_deepseek_vl_hybrid.py
++++ b/src/transformers/models/deepseek_vl_hybrid/image_processing_pil_deepseek_vl_hybrid.py
+@@ -83,17 +83,17 @@ class DeepseekVLHybridImageProcessorPil(PilBackend):
+     model_input_names = ["pixel_values", "high_res_pixel_values"]
+ 
+     def __init__(self, **kwargs: Unpack[DeepseekVLHybridImageProcessorKwargs]):
+-        if kwargs.get("image_mean") is None:
+-            background_color = (127, 127, 127)
++        super().__init__(**kwargs)
++        image_mean = getattr(self, "image_mean", None)
++        if image_mean is None:
++            self.background_color = (127, 127, 127)
+         else:
+-            background_color = tuple(int(x * 255) for x in kwargs.get("image_mean"))
+-        if kwargs.get("high_res_image_mean") is None:
+-            high_res_background_color = (127, 127, 127)
++            self.background_color = tuple(int(x * 255) for x in image_mean)
++        high_res_image_mean = getattr(self, "high_res_image_mean", None)
++        if high_res_image_mean is None:
++            self.high_res_background_color = (127, 127, 127)
+         else:
+-            high_res_background_color = tuple(int(x * 255) for x in kwargs.get("high_res_image_mean"))
+-        super().__init__(**kwargs)
+-        self.background_color = tuple(background_color)
+-        self.high_res_background_color = tuple(high_res_background_color)
++            self.high_res_background_color = tuple(int(x * 255) for x in high_res_image_mean)
+ 
+     @auto_docstring
+     def preprocess(self, images: ImageInput, **kwargs: Unpack[DeepseekVLHybridImageProcessorKwargs]) -> BatchFeature:
+diff --git a/src/transformers/models/deepseek_vl_hybrid/modular_deepseek_vl_hybrid.py b/src/transformers/models/deepseek_vl_hybrid/modular_deepseek_vl_hybrid.py
+index 88d26a93c723..0e318feab652 100644
+--- a/src/transformers/models/deepseek_vl_hybrid/modular_deepseek_vl_hybrid.py
++++ b/src/transformers/models/deepseek_vl_hybrid/modular_deepseek_vl_hybrid.py
+@@ -420,17 +420,17 @@ class DeepseekVLHybridImageProcessorPil(DeepseekVLImageProcessorPil):
+     model_input_names = ["pixel_values", "high_res_pixel_values"]
+ 
+     def __init__(self, **kwargs: Unpack[DeepseekVLHybridImageProcessorKwargs]):
+-        if kwargs.get("image_mean") is None:
+-            background_color = (127, 127, 127)
++        PilBackend.__init__(self, **kwargs)
++        image_mean = getattr(self, "image_mean", None)
++        if image_mean is None:
++            self.background_color = (127, 127, 127)
+         else:
+-            background_color = tuple(int(x * 255) for x in kwargs.get("image_mean"))
+-        if kwargs.get("high_res_image_mean") is None:
+-            high_res_background_color = (127, 127, 127)
++            self.background_color = tuple(int(x * 255) for x in image_mean)
++        high_res_image_mean = getattr(self, "high_res_image_mean", None)
++        if high_res_image_mean is None:
++            self.high_res_background_color = (127, 127, 127)
+         else:
+-            high_res_background_color = tuple(int(x * 255) for x in kwargs.get("high_res_image_mean"))
+-        PilBackend.__init__(self, **kwargs)
+-        self.background_color = tuple(background_color)
+-        self.high_res_background_color = tuple(high_res_background_color)
++            self.high_res_background_color = tuple(int(x * 255) for x in high_res_image_mean)
+ 
+     def _standardize_kwargs(
+         self,
+@@ -531,17 +531,17 @@ class DeepseekVLHybridImageProcessor(DeepseekVLImageProcessor):
+     model_input_names = ["pixel_values", "high_res_pixel_values"]
+ 
+     def __init__(self, **kwargs: Unpack[DeepseekVLHybridImageProcessorKwargs]):
+-        if kwargs.get("image_mean") is None:
+-            background_color = (127, 127, 127)
++        TorchvisionBackend.__init__(self, **kwargs)
++        image_mean = getattr(self, "image_mean", None)
++        if image_mean is None:
++            self.background_color = (127, 127, 127)
+         else:
+-            background_color = tuple(int(x * 255) for x in kwargs.get("image_mean"))
+-        if kwargs.get("high_res_image_mean") is None:
+-            high_res_background_color = (127, 127, 127)
++            self.background_color = tuple(int(x * 255) for x in image_mean)
++        high_res_image_mean = getattr(self, "high_res_image_mean", None)
++        if high_res_image_mean is None:
++            self.high_res_background_color = (127, 127, 127)
+         else:
+-            high_res_background_color = tuple(int(x * 255) for x in kwargs.get("high_res_image_mean"))
+-        TorchvisionBackend.__init__(self, **kwargs)
+-        self.background_color = tuple(background_color)
+-        self.high_res_background_color = tuple(high_res_background_color)
++            self.high_res_background_color = tuple(int(x * 255) for x in high_res_image_mean)
+ 
+     def _standardize_kwargs(
+         self,
+diff --git a/src/transformers/models/janus/image_processing_janus.py b/src/transformers/models/janus/image_processing_janus.py
+index f698dd61cbde..f54c5bec6b38 100644
+--- a/src/transformers/models/janus/image_processing_janus.py
++++ b/src/transformers/models/janus/image_processing_janus.py
+@@ -58,11 +58,11 @@ class JanusImageProcessor(TorchvisionBackend):
+ 
+     def __init__(self, **kwargs: Unpack[JanusImageProcessorKwargs]):
+         super().__init__(**kwargs)
+-        if kwargs.get("image_mean") is None:
+-            background_color = (127, 127, 127)
++        image_mean = getattr(self, "image_mean", None)
++        if image_mean is None:
++            self.background_color = (127, 127, 127)
+         else:
+-            background_color = tuple(int(x * 255) for x in kwargs.get("image_mean"))
+-        self.background_color = tuple(background_color)
++            self.background_color = tuple(int(x * 255) for x in image_mean)
+ 
+     def resize(
+         self,
+diff --git a/tests/models/deepseek_vl_hybrid/test_image_processing_deepseek_vl_hybrid.py b/tests/models/deepseek_vl_hybrid/test_image_processing_deepseek_vl_hybrid.py
+index 233d640c07b0..12570652ecd4 100644
+--- a/tests/models/deepseek_vl_hybrid/test_image_processing_deepseek_vl_hybrid.py
++++ b/tests/models/deepseek_vl_hybrid/test_image_processing_deepseek_vl_hybrid.py
+@@ -12,11 +12,12 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
++import tempfile
+ import unittest
+ 
+ import numpy as np
+ 
+-from transformers.image_utils import IMAGENET_STANDARD_MEAN
++from transformers.image_utils import IMAGENET_STANDARD_MEAN, OPENAI_CLIP_MEAN
+ from transformers.testing_utils import require_torch, require_vision
+ from transformers.utils import is_torch_available, is_vision_available
+ 
+@@ -183,3 +184,15 @@ def test_backends_equivalence_batched(self):
+     @unittest.skip(reason="Not supported")
+     def test_call_numpy_4_channels(self):
+         pass
++
++    def test_background_color(self):
++        expected = tuple(int(x * 255) for x in OPENAI_CLIP_MEAN)
++        for image_processing_class in self.image_processing_classes.values():
++            image_processor = image_processing_class()
++            self.assertEqual(image_processor.background_color, expected)
++            self.assertEqual(image_processor.high_res_background_color, expected)
++            with tempfile.TemporaryDirectory() as tmpdirname:
++                image_processor.save_pretrained(tmpdirname)
++                loaded = image_processing_class.from_pretrained(tmpdirname)
++            self.assertEqual(loaded.background_color, expected)
++            self.assertEqual(loaded.high_res_background_color, expected)
+diff --git a/tests/models/janus/test_image_processing_janus.py b/tests/models/janus/test_image_processing_janus.py
+index c7f698654066..af8b60f38596 100644
+--- a/tests/models/janus/test_image_processing_janus.py
++++ b/tests/models/janus/test_image_processing_janus.py
+@@ -12,6 +12,7 @@
+ # See the License for the specific language governing permissions and
+ # limitations under the License.
+ 
++import tempfile
+ import unittest
+ 
+ import numpy as np
+@@ -137,3 +138,13 @@ def test_backends_equivalence_postprocess(self):
+     @unittest.skip(reason="Not supported")
+     def test_call_numpy_4_channels(self):
+         pass
++
++    def test_background_color(self):
++        expected = tuple(int(x * 255) for x in OPENAI_CLIP_MEAN)
++        for image_processing_class in self.image_processing_classes.values():
++            image_processor = image_processing_class()
++            self.assertEqual(image_processor.background_color, expected)
++            with tempfile.TemporaryDirectory() as tmpdirname:
++                image_processor.save_pretrained(tmpdirname)
++                loaded = image_processing_class.from_pretrained(tmpdirname)
++            self.assertEqual(loaded.background_color, expected)

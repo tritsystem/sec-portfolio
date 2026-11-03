@@ -1,0 +1,37 @@
+diff --git a/tests/test_models.py b/tests/test_models.py
+index 1a1152ef45..9d1afa85fe 100644
+--- a/tests/test_models.py
++++ b/tests/test_models.py
+@@ -520,6 +520,18 @@ def test_reset_classifier_keeps_pool(model_name):
+         assert not torch.allclose(pooled_avg, expected)
+ 
+ 
++
++@pytest.mark.base
++def test_gcvit_batch_consistency():
++    # each image's global query must reach only that image's windows: batched output == per-image output
++    torch.manual_seed(0)
++    model = create_model('gcvit_xxtiny', pretrained=False).eval()
++    x = torch.randn(3, 3, 224, 224)
++    with torch.no_grad():
++        batched = model(x)
++        single = torch.cat([model(x[i:i + 1]) for i in range(x.shape[0])])
++    torch.testing.assert_close(batched, single, rtol=1e-4, atol=1e-4)
++
+ @pytest.mark.base
+ @pytest.mark.parametrize(
+     'model_name',
+diff --git a/timm/models/gcvit.py b/timm/models/gcvit.py
+index 267e34bddc..3cebbf6dad 100644
+--- a/timm/models/gcvit.py
++++ b/timm/models/gcvit.py
+@@ -219,7 +219,8 @@ def forward(self, x, q_global: Optional[torch.Tensor] = None):
+             kv = kv.reshape(B, N, 2, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+             k, v = kv.unbind(0)
+ 
+-            q = q_global.repeat(B // q_global.shape[0], 1, 1, 1)
++            # windows are image-major (all windows of image 0, then image 1, ...): keep each image's global query with them
++            q = q_global.repeat_interleave(B // q_global.shape[0], dim=0)
+             q = q.reshape(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
+         else:
+             qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)

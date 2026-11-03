@@ -1,0 +1,44 @@
+name: Regenerate deep-dive (deterministic, no model)
+
+# Tier-1 automation from OPERATING_PLAN.md: a timer re-pulls merged PRs and regenerates the
+# before/after + rubric + walkthrough page from the committed classification. No model in the loop,
+# so no hallucination risk. New PRs are flagged UNCLASSIFIED (a human adds a ~4-line entry).
+
+on:
+  schedule:
+    - cron: '17 6 * * 1'      # weekly, Monday 06:17 UTC
+  workflow_dispatch: {}        # and on demand
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install regex
+      - name: Pull merged PRs + diffs (deterministic)
+        run: python pull_diffs.py
+      - name: Classify (reads committed data/classify.py) + annotate
+        run: |
+          python data/classify.py
+          python data/annotate.py
+      - name: Regenerate the page
+        run: python gen_deepdive.py
+      - name: Surface any unclassified PRs in the job log
+        run: |
+          echo "Unclassified PRs (need a human 4-line entry in data/classify.py + data/annotate.py):"
+          cat data/unclassified.json
+      - name: Commit regenerated page if it changed
+        run: |
+          git config user.name tritsystem
+          git config user.email gbranaa4@gmail.com
+          git add deep-dive.html data/prs.json data/classified.json data/walks.json data/unclassified.json
+          git diff --cached --quiet || git commit -m "Auto-regenerate deep-dive (scheduled, deterministic)"
+          git push || true

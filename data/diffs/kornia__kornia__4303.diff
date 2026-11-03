@@ -1,0 +1,131 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 8cd8b25e2a..dea433c5d3 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -409,6 +409,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+   the only one. `kornia.feature.lightglue.Attention.enable_flash`, the attribute that combined the
+   constructor argument with the probe result (and so always equalled the argument, because SDPA is
+   present on every supported torch), was renamed to `Attention.allow_flash`. (#4287)
++* `bbox_to_mask3d` now returns the intersection of the three axis ranges for a box that covers or
++  overhangs a whole output axis, matching `Boxes3D.to_mask`, instead of filling the entire volume
++  (#4255, #4303). The old implementation `|`-ed the three broadcast axis slabs and tried to recover the
++  intersection with a three-way `all()` reduction; that recovery breaks the moment any one slab
++  covers a whole axis, since the union is then all-true on that axis and the reduction can no
++  longer see the other two slabs' bounds. Computing the intersection directly with `&` needs no
++  such recovery step. Interior boxes (the case the old reductions happened to recover correctly)
++  are unaffected and byte-identical.
+ * `solve_cubic`'s `D <= 0` (three-real-roots) branch no longer returns `nan` gradients for a
+   repeated or near-repeated real root (#4290, #4299). It differentiates `acos(R / sqrt(-Q3))`, whose own
+   derivative `-1/sqrt(1-x^2)` is unbounded at `x = +-1`; the branch condition guarantees the ratio
+diff --git a/kornia/geometry/bbox.py b/kornia/geometry/bbox.py
+index b8c5ecfc01..b29013b29c 100644
+--- a/kornia/geometry/bbox.py
++++ b/kornia/geometry/bbox.py
+@@ -357,14 +357,11 @@ def bbox_to_mask3d(boxes: torch.Tensor, size: tuple[int, int, int]) -> torch.Ten
+         :math:`(N, depth, height, width)`. After :func:`validate_bbox3d`, which raises ``AssertionError`` for an
+         invalid box, the bounds are read from fixed vertex positions, truncated toward zero with ``.long()``, and
+         compared inclusively, which reads the vertices as inclusive: pass the ``'vertices_plus'`` export. The
+-        intersection of the three axis ranges is recovered only when the box leaves at least one index uncovered
+-        on every axis; see the warning. There is no gradient path.
++        intersection of the three axis ranges is always recovered, including when a box covers or overhangs a
++        whole output axis. There is no gradient path.
+ 
+     .. warning::
+-        A box that covers or overhangs a whole output axis fills the entire volume instead of the intersection:
+-        the union-of-planes intermediate becomes all true and its reductions lose the other two bounds, where
+-        :meth:`~kornia.geometry.boxes.Boxes3D.to_mask` fills the clamped region. Tracked in
+-        `#4255 <https://github.com/kornia/kornia/issues/4255>`_. The truncation differs from the inclusive
++        The truncation differs from the inclusive
+         raw-float comparison of :func:`bbox_to_mask` and the rounding of
+         :meth:`~kornia.geometry.boxes.Boxes3D.to_mask` for fractional coordinates and is tracked in
+         `#4015 <https://github.com/kornia/kornia/issues/4015>`_. The ``float32`` output with a channel axis is
+@@ -434,20 +431,18 @@ def bbox_to_mask3d(boxes: torch.Tensor, size: tuple[int, int, int]) -> torch.Ten
+     y = torch.arange(D1, device=boxes.device, dtype=torch.long)
+     x = torch.arange(D2, device=boxes.device, dtype=torch.long)
+ 
+-    # Compute mask as union of planes in one step
++    # Intersection of the three broadcast axis slabs, computed directly with `&`. This used to
++    # `|` the three slabs and recover the intersection with a three-way `all()` reduction/product;
++    # that recovery breaks the moment any one slab covers a whole axis, since the union is then
++    # all-true on that axis and the reduction can no longer see the other two slabs' bounds. `&`
++    # needs no such recovery step -- each broadcast slab already carries its own axis's bound at
++    # every position, so the elementwise intersection is exactly the answer.
+     m = (
+         ((z[None, :] >= z_min[:, None]) & (z[None, :] <= z_max[:, None]))[:, None, :, None, None]
+-        | ((y[None, :] >= y_min[:, None]) & (y[None, :] <= y_max[:, None]))[:, None, None, :, None]
+-        | ((x[None, :] >= x_min[:, None]) & (x[None, :] <= x_max[:, None]))[:, None, None, None, :]
+-    ).float()  # Shape: (N, 1, D0, D1, D2)
+-
+-    # Compute conditions
+-    cond1 = m.all(dim=3, keepdim=True).all(dim=2, keepdim=True)
+-    cond2 = m.all(dim=4, keepdim=True).all(dim=2, keepdim=True)
+-    cond3 = m.all(dim=3, keepdim=True).all(dim=4, keepdim=True)
+-
+-    m_out = cond1 * cond2 * cond3  # Broadcasting to (N, 1, D0, D1, D2)
+-    return m_out.float()
++        & ((y[None, :] >= y_min[:, None]) & (y[None, :] <= y_max[:, None]))[:, None, None, :, None]
++        & ((x[None, :] >= x_min[:, None]) & (x[None, :] <= x_max[:, None]))[:, None, None, None, :]
++    )  # Shape: (N, 1, D0, D1, D2)
++    return m.float()
+ 
+ 
+ def bbox_generator(
+diff --git a/kornia/geometry/boxes.py b/kornia/geometry/boxes.py
+index feb3f29f5c..b6f747cac6 100644
+--- a/kornia/geometry/boxes.py
++++ b/kornia/geometry/boxes.py
+@@ -1448,9 +1448,7 @@ def to_mask(self, depth: int, height: int, width: int) -> torch.Tensor:
+ 
+         .. warning::
+             The rounding split with :func:`~kornia.geometry.bbox.bbox_to_mask3d` is tracked in
+-            `#4015 <https://github.com/kornia/kornia/issues/4015>`_. That function also fills the whole volume for
+-            a box that covers or overhangs a full axis, where this method fills the clamped region; tracked in
+-            `#4255 <https://github.com/kornia/kornia/issues/4255>`_.
++            `#4015 <https://github.com/kornia/kornia/issues/4015>`_.
+ 
+         Args:
+             depth: depth of the masked image/images.
+diff --git a/tests/geometry/test_bbox.py b/tests/geometry/test_bbox.py
+index 432ac0b38c..b8919670ca 100644
+--- a/tests/geometry/test_bbox.py
++++ b/tests/geometry/test_bbox.py
+@@ -673,10 +673,15 @@ def test_wart_bbox_to_mask3d_returns_float32_with_a_channel_axis_4250(self, devi
+         assert bbox_to_mask(square, 6, 5).dtype == dtype
+ 
+     @pytest.mark.parametrize("case", ["full_width", "full_height", "full_depth", "overhang"])
+-    def test_wart_bbox_to_mask3d_fills_the_whole_volume_when_a_box_spans_an_axis_4255(self, device, dtype, case):
+-        # Wart pin for kornia#4255: once one axis slab covers every index of the (4, 4, 5) volume, the
+-        # union-of-planes intermediate is all true and its reductions lose the other two bounds, so all
+-        # 80 voxels are filled where Boxes3D.to_mask fills the intersection. The interior box is unaffected.
++    def test_convention_bbox_to_mask3d_intersects_the_axis_ranges_for_a_full_or_overhanging_axis_box_4255(
++        self, device, dtype, case
++    ):
++        # kornia#4255: once one axis slab covers every index of the (4, 4, 5) volume, the OLD
++        # union-of-planes intermediate went all-true and its `all()`-reduction recovery lost the
++        # other two bounds, filling all 80 voxels where Boxes3D.to_mask correctly fills the
++        # intersection. bbox_to_mask3d now matches Boxes3D.to_mask exactly, including for a box
++        # that overhangs the volume on one axis (the normal state of a box after a crop or a
++        # translation). The interior box (unaffected even before the fix) is checked alongside it.
+         xyzxyz_plus, intersection = {
+             "full_width": ([0.0, 1.0, 1.0, 4.0, 2.0, 2.0], 20.0),
+             "full_height": ([1.0, 0.0, 1.0, 2.0, 3.0, 2.0], 16.0),
+@@ -684,18 +689,13 @@ def test_wart_bbox_to_mask3d_fills_the_whole_volume_when_a_box_spans_an_axis_425
+             "overhang": ([-1.0, 1.0, 1.0, 5.0, 2.0, 2.0], 20.0),
+         }[case]
+         boxes = Boxes3D.from_tensor(torch.tensor([xyzxyz_plus], device=device, dtype=dtype), mode="xyzxyz_plus")
+-        assert bbox_to_mask3d(boxes.data, (4, 4, 5)).sum().item() == 80.0
++        assert bbox_to_mask3d(boxes.data, (4, 4, 5)).sum().item() == intersection
+         assert boxes.to_mask(4, 4, 5).sum().item() == intersection
+         interior = Boxes3D.from_tensor(
+             torch.tensor([[1.0, 1.0, 1.0, 2.0, 2.0, 2.0]], device=device, dtype=dtype), mode="xyzxyz_plus"
+         )
+         assert bbox_to_mask3d(interior.data, (4, 4, 5)).sum().item() == interior.to_mask(4, 4, 5).sum().item() == 8.0
+ 
+-    @pytest.mark.xfail(
+-        strict=True,
+-        raises=AssertionError,
+-        reason="kornia#4255: bbox_to_mask3d fills the whole volume for a full-axis box",
+-    )
+     def test_convention_bbox_to_mask3d_intersects_the_axis_ranges_for_a_full_axis_box_4255(self, device, dtype):
+         # x spans the whole width 0..4, y and z cover 1..2: the intersection is 2 * 2 * 5 = 20 voxels.
+         boxes = Boxes3D.from_tensor(

@@ -1,0 +1,515 @@
+diff --git a/docs/snn.neurons_synapticdelay.rst b/docs/snn.neurons_synapticdelay.rst
+new file mode 100644
+index 00000000..10ebffb6
+--- /dev/null
++++ b/docs/snn.neurons_synapticdelay.rst
+@@ -0,0 +1,9 @@
++===========================
++snn.SynapticDelay
++===========================
++
++
++.. automodule:: snntorch._neurons.synapticdelay
++   :members:
++   :undoc-members:
++   :show-inheritance:
+diff --git a/docs/snntorch.rst b/docs/snntorch.rst
+index 8aa09acb..a85748ca 100644
+--- a/docs/snntorch.rst
++++ b/docs/snntorch.rst
+@@ -28,6 +28,10 @@ At present, the neurons available in :mod:`snntorch` are variants of the Leaky I
+ Neuron models that accelerate training require passing data in parallel. Available neurons include:
+ * **LeakyParallel** - 1st Order Leaky Integrate-and-Fire Neuron
+ 
++Connection primitives:
++
++* **SynapticDelay** - per-channel axonal / synaptic transmission delay with an optionally learnable delay time. Drop it between a connection and a neuron (``fc -> SynapticDelay -> Leaky``) to give a pathway a lag. Works step-by-step or on a whole ``(time, batch, channels)`` sequence, and the fractional delay is realised by interpolation so it can be trained by backprop.
++
+ Additional models include spiking-LSTMs and spiking-ConvLSTMs:
+ 
+ * **SLSTM** - Spiking long short-term memory cell with state-thresholding 
+diff --git a/snntorch/_neurons/__init__.py b/snntorch/_neurons/__init__.py
+index 5f53aae3..2b828f32 100644
+--- a/snntorch/_neurons/__init__.py
++++ b/snntorch/_neurons/__init__.py
+@@ -19,6 +19,7 @@
+     "rleaky",
+     "rsynaptic",
+     "synaptic",
++    "synapticdelay",
+     "sconv2dlstm",
+     "slstm",
+     "gen2",
+@@ -42,3 +43,5 @@
+ from .slstm import SLSTM
+ 
+ from .leakyparallel import LeakyParallel
++
++from .synapticdelay import SynapticDelay
+diff --git a/snntorch/_neurons/synapticdelay.py b/snntorch/_neurons/synapticdelay.py
+new file mode 100644
+index 00000000..2041e41c
+--- /dev/null
++++ b/snntorch/_neurons/synapticdelay.py
+@@ -0,0 +1,258 @@
++import torch
++import torch.nn as nn
++import torch.nn.functional as F
++
++
++__all__ = ["SynapticDelay"]
++
++
++class SynapticDelay(nn.Module):
++    """
++    Per-channel (axonal / synaptic) transmission delay for spike or current
++    signals, with an optionally **learnable** delay time.
++
++    A spike or current on channel :math:`c` is delayed by :math:`d_c \\ge 0`
++    time steps before it is passed on. ``SynapticDelay`` is a plain
++    ``nn.Module`` that is dropped into a network wherever a lag is wanted,
++    typically between a connection and a neuron::
++
++        self.fc1   = nn.Linear(num_in, num_hidden)
++        self.delay = snn.SynapticDelay(max_delay=16, delay=1.0,
++                                       channels=num_hidden, learn_delay=True)
++        self.lif1  = snn.Leaky(beta=0.9)
++        ...
++        cur1 = self.delay(self.fc1(x))      # step mode: cur1, x are (batch, N)
++        spk1, mem1 = self.lif1(cur1, mem1)
++
++    The fractional delay is realised by interpolation, so :math:`d_c` is a
++    continuous, trainable quantity. Two interpolation kernels are provided:
++
++    * ``kernel="linear"`` -- a 2-tap kernel,
++      :math:`w[\\lfloor d \\rfloor] = 1 - \\mathrm{frac}(d)`,
++      :math:`w[\\lfloor d \\rfloor + 1] = \\mathrm{frac}(d)`. Exactly
++      differentiable w.r.t. :math:`d`. This is the default.
++    * ``kernel="gaussian"`` -- a normalised
++      :math:`\\exp(-(\\tau - d)^2 / 2\\sigma^2)` kernel. Smoother gradients
++      over a wide delay range; anneal ``sigma`` toward a small value during
++      training (the DCLS trick, Hammouamri et al., ICLR 2024).
++
++    **Two call modes, one kernel:**
++
++    * **Step mode** (``step_mode=True``, the default) -- input
++      ``(batch, channels)``, called once per time step (the standard
++      snntorch loop). An internal ring buffer holds the last
++      ``max_delay + 1`` inputs. Call :meth:`reset_delay` at the start of
++      each sequence, exactly as you call ``Leaky.reset_mem()``.
++    * **Sequence mode** (``step_mode=False``) -- input
++      ``(time, batch, channels)`` (or ``(time, channels)``), the whole
++      sequence at once, to pair with :class:`snntorch.LeakyParallel`.
++      Implemented as a causal depthwise convolution along time; no state,
++      no reset needed.
++
++    Both modes use the same delay kernel and, for the same delay, produce
++    the same output (up to the ring buffer's ramp-up at the start).
++
++    The delay is clamped to ``[0, max_delay]`` on every forward pass, in the
++    same spirit as ``beta`` being clamped to ``[0, 1]``.
++
++    :param max_delay: maximum delay in time steps; sets the ring-buffer /
++        convolution-kernel length. Must satisfy ``max_delay >= ceil(delay)``.
++    :type max_delay: int
++
++    :param delay: initial delay in time steps. Scalar, or a tensor of shape
++        ``(channels,)`` for a per-channel initialisation. Defaults to 0.0
++        (pass-through).
++    :type delay: float or torch.Tensor, optional
++
++    :param channels: number of channels ``C``. If given, the delay is a
++        length-``C`` vector (one learnable delay per channel). If ``None``,
++        a single delay value is shared by all channels. Defaults to None.
++    :type channels: int, optional
++
++    :param learn_delay: if ``True``, the delay is an ``nn.Parameter`` and is
++        trained by backprop; otherwise it is a fixed buffer. Defaults to
++        False.
++    :type learn_delay: bool, optional
++
++    :param kernel: ``"linear"`` (2-tap, default) or ``"gaussian"``.
++    :type kernel: str, optional
++
++    :param sigma: width of the Gaussian kernel (ignored for ``"linear"``).
++        Defaults to 1.0.
++    :type sigma: float, optional
++
++    :param step_mode: if ``True`` (default) the module is called once per
++        time step with ``(batch, channels)`` input and keeps a ring buffer.
++        If ``False`` it takes a whole ``(time, batch, channels)`` sequence
++        at once. Defaults to True.
++    :type step_mode: bool, optional
++
++    Inputs: input\\_
++        - **input_** of shape ``(batch, channels)`` (step mode) or
++          ``(time, batch, channels)`` / ``(time, channels)`` (sequence
++          mode).
++
++    Outputs: delayed
++        - **delayed** -- same shape as ``input_``; each channel delayed by
++          its own ``delay`` steps. The first ``ceil(delay)`` step-mode
++          outputs after a :meth:`reset_delay` are ramp-up (buffer still
++          filling), as with any real delay line.
++
++    Learnable Parameters:
++        - **SynapticDelay.delay** (torch.Tensor) -- the per-channel (or
++          scalar) delay, present as a parameter when ``learn_delay=True``.
++    """
++
++    def __init__(
++        self,
++        max_delay,
++        delay=0.0,
++        channels=None,
++        learn_delay=False,
++        kernel="linear",
++        sigma=1.0,
++        step_mode=True,
++    ):
++        super().__init__()
++
++        self.step_mode = bool(step_mode)
++
++        if int(max_delay) != max_delay or max_delay < 1:
++            raise ValueError("max_delay must be a positive integer.")
++        self.max_delay = int(max_delay)
++
++        if kernel not in ("linear", "gaussian"):
++            raise ValueError("kernel must be 'linear' or 'gaussian'.")
++        self.kernel = kernel
++        self.sigma = float(sigma)
++        self.channels = None if channels is None else int(channels)
++
++        if not isinstance(delay, torch.Tensor):
++            delay = torch.as_tensor(delay, dtype=torch.float)
++        delay = delay.float()
++        if self.channels is not None and delay.ndim == 0:
++            delay = delay.expand(self.channels).clone()
++        if delay.ndim == 0:
++            pass
++        elif self.channels is not None and delay.shape != (self.channels,):
++            raise ValueError(
++                f"delay tensor must have shape ({self.channels},), "
++                f"got {tuple(delay.shape)}."
++            )
++
++        if float(delay.max()) > self.max_delay or float(delay.min()) < 0:
++            raise ValueError(
++                "every delay must lie in [0, max_delay] "
++                f"(got range [{float(delay.min())}, {float(delay.max())}], "
++                f"max_delay={self.max_delay})."
++            )
++
++        if learn_delay:
++            self.delay = nn.Parameter(delay)
++        else:
++            self.register_buffer("delay", delay)
++        self.learn_delay = learn_delay
++
++        # ring buffer for step mode; lazily shaped on first step-mode call
++        self.register_buffer("_buffer", torch.zeros(0), persistent=False)
++
++    # ------------------------------------------------------------------ #
++    #  delay kernel
++    # ------------------------------------------------------------------ #
++    def _lag_weights(self, n_channels, device, dtype):
++        """Return the per-lag interpolation weights, shape (C, max_delay+1).
++        ``w[c, l]`` multiplies the input from ``l`` steps ago for channel c.
++        """
++        d = self.delay.clamp(0.0, self.max_delay)
++        if d.ndim == 0:
++            d = d.expand(n_channels)
++        elif d.shape[0] != n_channels:
++            raise ValueError(
++                f"SynapticDelay configured for {d.shape[0]} channels but got "
++                f"input with {n_channels}."
++            )
++        d = d.to(device=device, dtype=dtype)
++
++        lags = torch.arange(
++            self.max_delay + 1, device=device, dtype=dtype
++        ).unsqueeze(
++            0
++        )  # (1, K+1)
++        diff = lags - d.unsqueeze(1)  # (C, K+1)
++
++        if self.kernel == "linear":
++            w = (1.0 - diff.abs()).clamp(min=0.0)
++            # exact 2-tap; renormalise only the boundary case d==max_delay
++            w = w / w.sum(dim=1, keepdim=True).clamp(min=1e-12)
++        else:  # gaussian
++            w = torch.exp(-(diff**2) / (2.0 * self.sigma**2))
++            w = w / w.sum(dim=1, keepdim=True).clamp(min=1e-12)
++        return w  # (C, K+1)
++
++    # ------------------------------------------------------------------ #
++    #  state (step mode)
++    # ------------------------------------------------------------------ #
++    def reset_delay(self):
++        """Clear the step-mode ring buffer. Call once per sequence, like
++        ``Leaky.reset_mem()``."""
++        self._buffer = torch.zeros_like(self._buffer)
++        return self._buffer
++
++    # ------------------------------------------------------------------ #
++    #  forward
++    # ------------------------------------------------------------------ #
++    def forward(self, input_):
++        if self.step_mode:
++            if input_.dim() != 2:
++                raise ValueError(
++                    "step_mode=True expects (batch, channels); got "
++                    f"{tuple(input_.shape)}. Use step_mode=False for a "
++                    "(time, batch, channels) sequence."
++                )
++            return self._forward_step(input_)
++        if input_.dim() not in (2, 3):
++            raise ValueError(
++                "step_mode=False expects (time, batch, channels) or "
++                f"(time, channels); got {tuple(input_.shape)}."
++            )
++        return self._forward_sequence(input_)
++
++    def _forward_step(self, x):
++        # x: (batch, channels)
++        b, c = x.shape
++        k = self.max_delay + 1
++        if self._buffer.shape != (k, b, c):
++            self._buffer = torch.zeros(k, b, c, device=x.device, dtype=x.dtype)
++        # push current input at lag 0, drop the oldest
++        self._buffer = torch.cat(
++            (x.unsqueeze(0), self._buffer[:-1]), dim=0
++        )  # (K+1, B, C)
++        w = self._lag_weights(c, x.device, x.dtype)  # (C, K+1)
++        w = w.transpose(0, 1).unsqueeze(1)  # (K+1, 1, C)
++        return (self._buffer * w).sum(dim=0)  # (B, C)
++
++    def _forward_sequence(self, x):
++        squeeze_batch = x.dim() == 2
++        if squeeze_batch:
++            x = x.unsqueeze(1)  # (T, 1, C)
++        t, b, c = x.shape
++        w = self._lag_weights(c, x.device, x.dtype)  # (C, K+1)
++        # causal cross-correlation: out[t] = sum_l x[t-l] * w[:, l]
++        weight = w.flip(-1).unsqueeze(1)  # (C, 1, K+1)
++        xin = x.permute(1, 2, 0)  # (B, C, T)
++        xin = F.pad(xin, (self.max_delay, 0))  # left-pad K
++        out = F.conv1d(xin, weight, groups=c)  # (B, C, T)
++        out = out.permute(2, 0, 1)  # (T, B, C)
++        return out.squeeze(1) if squeeze_batch else out
++
++    def extra_repr(self):
++        d = self.delay.detach()
++        dstr = (
++            f"{float(d):.3g}" if d.ndim == 0 else f"tensor[{tuple(d.shape)}]"
++        )
++        return (
++            f"max_delay={self.max_delay}, delay={dstr}, "
++            f"channels={self.channels}, learn_delay={self.learn_delay}, "
++            f"kernel={self.kernel}"
++            + (f", sigma={self.sigma}" if self.kernel == "gaussian" else "")
++        )
+diff --git a/tests/test_snntorch/test_synapticdelay.py b/tests/test_snntorch/test_synapticdelay.py
+new file mode 100644
+index 00000000..35b15e32
+--- /dev/null
++++ b/tests/test_snntorch/test_synapticdelay.py
+@@ -0,0 +1,197 @@
++#!/usr/bin/env python
++
++"""Tests for the SynapticDelay module (per-channel axonal / synaptic delay)."""
++
++import pytest
++import snntorch as snn
++import torch
++
++
++@pytest.fixture(scope="module")
++def impulse():
++    # a single unit impulse at t=2 on one channel, 12 steps, batch 1
++    x = torch.zeros(12, 1, 1)
++    x[2, 0, 0] = 1.0
++    return x
++
++
++class TestSynapticDelay:
++    # ---------------------------------------------------------------- #
++    #  static integer delay is exact  (Bar 1)
++    # ---------------------------------------------------------------- #
++    def test_integer_delay_step_mode(self, impulse):
++        d = snn.SynapticDelay(max_delay=8, delay=3)
++        d.reset_delay()
++        out = torch.stack([d(impulse[t]) for t in range(impulse.shape[0])])
++        nz = (out.abs() > 1e-6).nonzero()[:, 0].tolist()
++        assert nz == [5]  # impulse at 2, delayed by 3
++        assert out[5, 0, 0] == pytest.approx(1.0)
++
++    def test_integer_delay_sequence_mode(self, impulse):
++        d = snn.SynapticDelay(max_delay=8, delay=3, step_mode=False)
++        out = d(impulse)
++        nz = (out.abs() > 1e-6).nonzero()[:, 0].tolist()
++        assert nz == [5]
++        assert out[5, 0, 0] == pytest.approx(1.0)
++
++    def test_zero_delay_is_passthrough(self):
++        x = torch.randn(10, 3, 4)
++        d = snn.SynapticDelay(max_delay=5, delay=0.0, step_mode=False)
++        assert torch.allclose(d(x), x, atol=1e-6)
++
++    def test_step_and_sequence_modes_agree(self):
++        torch.manual_seed(0)
++        C, T = 4, 20
++        x = torch.randn(T, 2, C)
++        delay = torch.tensor([0.0, 1.5, 3.0, 5.0])
++        ds = snn.SynapticDelay(max_delay=6, delay=delay, channels=C)
++        ds.reset_delay()
++        step = torch.stack([ds(x[t]) for t in range(T)])
++        dq = snn.SynapticDelay(
++            max_delay=6, delay=delay, channels=C, step_mode=False
++        )
++        seq = dq(x)
++        assert torch.allclose(step, seq, atol=1e-6)
++
++    def test_fractional_delay_interpolates(self):
++        x = torch.zeros(10, 1, 1)
++        x[1, 0, 0] = 1.0
++        d = snn.SynapticDelay(
++            max_delay=6, delay=2.25, step_mode=False, kernel="linear"
++        )
++        out = d(x).squeeze()
++        # impulse at t=1, delay 2.25 -> mass split across t=3 (0.75)
++        # and t=4 (0.25)
++        assert out[3] == pytest.approx(0.75, abs=1e-5)
++        assert out[4] == pytest.approx(0.25, abs=1e-5)
++        assert out.sum() == pytest.approx(1.0, abs=1e-5)
++
++    # ---------------------------------------------------------------- #
++    #  differentiability of the delay parameter  (Bar 2)
++    # ---------------------------------------------------------------- #
++    def test_delay_is_learnable_parameter(self):
++        d = snn.SynapticDelay(max_delay=6, delay=2.0, learn_delay=True)
++        assert isinstance(d.delay, torch.nn.Parameter)
++        assert d.delay.requires_grad
++        d2 = snn.SynapticDelay(max_delay=6, delay=2.0, learn_delay=False)
++        assert not isinstance(d2.delay, torch.nn.Parameter)
++
++    def test_gradcheck_wrt_input(self):
++        torch.manual_seed(0)
++        d = snn.SynapticDelay(
++            max_delay=6, delay=2.3, learn_delay=True, step_mode=False
++        ).double()
++        x = torch.randn(15, 1, 2, dtype=torch.double, requires_grad=True)
++        assert torch.autograd.gradcheck(d, (x,), eps=1e-6, atol=1e-4)
++
++    def test_delay_gradient_matches_finite_difference(self):
++        torch.manual_seed(0)
++        d = snn.SynapticDelay(
++            max_delay=6, delay=2.3, learn_delay=True, step_mode=False
++        ).double()
++        x = torch.randn(15, 1, 1, dtype=torch.double)
++
++        d.delay.grad = None
++        d(x).sum().backward()
++        g_analytic = d.delay.grad.item()
++
++        h = 1e-6
++        with torch.no_grad():
++            d.delay.copy_(torch.tensor(2.3 + h, dtype=torch.double))
++            yp = d(x).sum().item()
++            d.delay.copy_(torch.tensor(2.3 - h, dtype=torch.double))
++            ym = d(x).sum().item()
++        g_fd = (yp - ym) / (2 * h)
++        assert abs(g_analytic - g_fd) < 1e-4
++
++    def test_gradient_flows_to_delay_and_input(self):
++        d = snn.SynapticDelay(
++            max_delay=6, delay=2.5, learn_delay=True, step_mode=False
++        )
++        x = torch.randn(12, 2, 3, requires_grad=True)
++        d(x).pow(2).sum().backward()
++        assert d.delay.grad is not None and torch.isfinite(d.delay.grad).all()
++        assert x.grad is not None and torch.isfinite(x.grad).all()
++
++    # ---------------------------------------------------------------- #
++    #  API / validation
++    # ---------------------------------------------------------------- #
++    def test_per_channel_delay_vector(self):
++        d = snn.SynapticDelay(
++            max_delay=8,
++            delay=torch.tensor([1.0, 4.0]),
++            channels=2,
++            step_mode=False,
++        )
++        x = torch.zeros(12, 1, 2)
++        x[0, 0, 0] = 1.0
++        x[0, 0, 1] = 1.0
++        out = d(x).squeeze(1)
++        assert out[1, 0] == pytest.approx(1.0)  # ch0 delayed 1
++        assert out[4, 1] == pytest.approx(1.0)  # ch1 delayed 4
++
++    def test_rejects_delay_out_of_range(self):
++        with pytest.raises(ValueError):
++            snn.SynapticDelay(max_delay=4, delay=9.0)
++        with pytest.raises(ValueError):
++            snn.SynapticDelay(max_delay=4, delay=-1.0)
++
++    def test_rejects_bad_max_delay(self):
++        with pytest.raises(ValueError):
++            snn.SynapticDelay(max_delay=0)
++
++    def test_rejects_bad_kernel(self):
++        with pytest.raises(ValueError):
++            snn.SynapticDelay(max_delay=4, kernel="quadratic")
++
++    def test_step_mode_shape_guard(self):
++        d = snn.SynapticDelay(max_delay=4, delay=1.0, step_mode=True)
++        with pytest.raises(ValueError):
++            d(torch.randn(5, 2, 3))  # 3-D into step mode
++
++    def test_reset_delay_clears_buffer(self, impulse):
++        d = snn.SynapticDelay(max_delay=8, delay=3)
++        d.reset_delay()
++        for t in range(impulse.shape[0]):
++            d(impulse[t])
++        d.reset_delay()
++        out = torch.stack([d(torch.zeros(1, 1)) for _ in range(6)])
++        assert out.abs().max() == pytest.approx(0.0)  # no leftover state
++
++    # ---------------------------------------------------------------- #
++    #  composition with neurons  (Bar 5)
++    # ---------------------------------------------------------------- #
++    def test_composes_with_leaky_step_mode(self):
++        torch.manual_seed(0)
++        fc = torch.nn.Linear(3, 5)
++        delay = snn.SynapticDelay(
++            max_delay=6, delay=2.0, channels=5, learn_delay=True
++        )
++        lif = snn.Leaky(beta=0.9)
++        mem = lif.init_leaky()
++        delay.reset_delay()
++        x = torch.randn(8, 4, 3)
++        loss = 0.0
++        for t in range(8):
++            spk, mem = lif(delay(fc(x[t])), mem)
++            loss = loss + spk.sum()
++        loss.backward()
++        assert delay.delay.grad is not None
++        assert torch.isfinite(fc.weight.grad).all()
++
++    def test_composes_with_leakyparallel_sequence_mode(self):
++        torch.manual_seed(0)
++        fc = torch.nn.Linear(3, 5)
++        delay = snn.SynapticDelay(
++            max_delay=6,
++            delay=2.0,
++            channels=5,
++            learn_delay=True,
++            step_mode=False,
++        )
++        lif = snn.LeakyParallel(input_size=5, hidden_size=5, beta=0.9)
++        x = torch.randn(8, 4, 3)
++        spk = lif(delay(fc(x)))
++        spk.sum().backward()
++        assert delay.delay.grad is not None
++        assert torch.isfinite(delay.delay.grad).all()

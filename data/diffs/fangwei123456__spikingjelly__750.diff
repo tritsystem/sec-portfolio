@@ -1,0 +1,588 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index a9bd5562..0e134105 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,15 @@ and the archived documentation linked from the project README.
+ 
+ ## Unreleased
+ 
++### Features
++
++#### Spiking Neurons
++
++Module: `spikingjelly.activation_based.neuron`.
++
++- Added the torch-only `RAFNode` resonate-and-fire neuron with fixed oscillator
++  parameters, real-valued states, and single-step and multi-step execution.
++
+ ### Improvements
+ 
+ #### Stateful Modules
+diff --git a/docs/source/APIs/spikingjelly.activation_based.functional.rst b/docs/source/APIs/spikingjelly.activation_based.functional.rst
+index 00a86441..2a49711c 100644
+--- a/docs/source/APIs/spikingjelly.activation_based.functional.rst
++++ b/docs/source/APIs/spikingjelly.activation_based.functional.rst
+@@ -113,6 +113,8 @@ remains a ``MemoryModule`` responsibility, so backend-specific functions identif
+      - One ParametricLIF state update.
+    * - :func:`izhikevich_step <spikingjelly.activation_based.functional.neuron.izhikevich_step>`
+      - One Izhikevich voltage and adaptation-current update.
++   * - :func:`raf_step <spikingjelly.activation_based.functional.neuron.raf_step>`
++     - One resonate-and-fire state update.
+    * - :func:`klif_step <spikingjelly.activation_based.functional.neuron.klif_step>`
+      - One KLIF state update.
+    * - :func:`cuba_lif_step <spikingjelly.activation_based.functional.neuron.cuba_lif_step>`
+diff --git a/docs/source/APIs/spikingjelly.activation_based.neuron.research.rst b/docs/source/APIs/spikingjelly.activation_based.neuron.research.rst
+index 90bcde2d..33861424 100644
+--- a/docs/source/APIs/spikingjelly.activation_based.neuron.research.rst
++++ b/docs/source/APIs/spikingjelly.activation_based.neuron.research.rst
+@@ -43,6 +43,15 @@ Nonlinear Integrate-and-fire Neurons
+    :show-inheritance:
+    :exclude-members: supported_backends, extra_repr
+ 
++Resonate-and-Fire Neurons
++--------------------------------------------------
++
++.. automodule:: spikingjelly.activation_based.neuron.resonate
++   :members:
++   :undoc-members:
++   :show-inheritance:
++   :exclude-members: supported_backends, extra_repr
++
+ LIF Variants
+ --------------------------------------------------
+ 
+diff --git a/docs/source/APIs/spikingjelly.activation_based.neuron.rst b/docs/source/APIs/spikingjelly.activation_based.neuron.rst
+index 67e7e0f7..83e3b193 100644
+--- a/docs/source/APIs/spikingjelly.activation_based.neuron.rst
++++ b/docs/source/APIs/spikingjelly.activation_based.neuron.rst
+@@ -144,6 +144,14 @@ Nonlinear Integrate-and-fire Neurons
+    * - :class:`EIFNode <spikingjelly.activation_based.neuron.nonlinear_if.EIFNode>`
+      - Exponential Integrate-and-Fire (EIF) neuron.
+ 
++Resonate-and-Fire Neurons
++--------------------------------------------------
++
++.. list-table::
++
++   * - :class:`RAFNode <spikingjelly.activation_based.neuron.resonate.RAFNode>`
++     - Resonate-and-Fire (RAF) neuron.
++
+ LIF Variants
+ --------------------------------------------------
+ 
+diff --git a/docs/source/changelog.rst b/docs/source/changelog.rst
+index ffb8a4fa..ba42753d 100644
+--- a/docs/source/changelog.rst
++++ b/docs/source/changelog.rst
+@@ -15,6 +15,17 @@ and the archived documentation linked from the project README.
+ Unreleased
+ ----------
+ 
++Features
++~~~~~~~~
++
++Spiking Neurons
++^^^^^^^^^^^^^^^
++
++Module: ``spikingjelly.activation_based.neuron``.
++
++- Added the torch-only ``RAFNode`` resonate-and-fire neuron with fixed oscillator
++  parameters, real-valued states, and single-step and multi-step execution.
++
+ Improvements
+ ~~~~~~~~~~~~
+ 
+diff --git a/spikingjelly/activation_based/functional/neuron.py b/spikingjelly/activation_based/functional/neuron.py
+index 1073dfbb..f8dbdfad 100644
+--- a/spikingjelly/activation_based/functional/neuron.py
++++ b/spikingjelly/activation_based/functional/neuron.py
+@@ -36,6 +36,7 @@
+ 
+ from __future__ import annotations
+ 
++import math
+ from typing import Callable, Optional
+ 
+ import torch
+@@ -52,6 +53,7 @@
+     "ilif_step",
+     "plif_step",
+     "izhikevich_step",
++    "raf_step",
+     "klif_step",
+     "cuba_lif_step",
+     "if_step_cupy",
+@@ -1222,6 +1224,138 @@ def izhikevich_step(
+     return spike, v_next, w_next + b * spike
+ 
+ 
++def raf_step(
++    x: torch.Tensor,
++    u: torch.Tensor,
++    v: torch.Tensor,
++    b: float,
++    omega: float,
++    dt: float,
++    v_threshold: float,
++    v_reset: Optional[float],
++    surrogate_function: SurrogateFunction,
++    detach_reset: bool = False,
++) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
++    r"""
++    **API Language** - :ref:`中文 <raf_step-cn>` | :ref:`English <raf_step-en>`
++
++    ----
++
++    .. _raf_step-cn:
++
++    * **中文**
++
++    执行 resonate-and-fire (RAF) 神经元的一次显式状态更新。
++
++    RAF 神经元（Izhikevich, *Resonate-and-fire neurons*, Neural Networks 14
++    (2001) 883-894）是一个二维线性阈下系统，状态可等价看作复数 :math:`z = u + iv`，
++    按固定的衰减率 :math:`b < 0` 和固有角频率 :math:`\omega` 旋转衰减：
++
++    .. math::
++
++        z[t] = z[t-1] \cdot \exp((b + i\omega)\,dt) + x[t]
++
++    real 分量 :math:`u` 接收输入电流；imaginary 分量 :math:`v` 是放电分量，
++    对应阈下阻尼振荡，在阈值附近对输入频率有选择性响应。展开为两个实数状态：
++
++    .. math::
++
++        u[t] &= \alpha (u[t-1]\cos\theta - v[t-1]\sin\theta) + x[t] \\
++        v[t] &= \alpha (u[t-1]\sin\theta + v[t-1]\cos\theta)
++
++    其中 :math:`\alpha = \exp(b\,dt)`，:math:`\theta = \omega\,dt`。放电后只重置
++    :math:`v`（放电分量），:math:`u` 不受影响，这正是产生放电后反弹
++    （post-inhibitory rebound）的原因。
++
++    :param x: 当前输入张量，shape 为 ``[N, *]``
++    :type x: torch.Tensor
++    :param u: 当前实部状态（接收输入的分量），shape、dtype 和 device 与 ``x`` 兼容
++    :type u: torch.Tensor
++    :param v: 当前虚部状态（放电分量），shape、dtype 和 device 与 ``x`` 兼容
++    :type v: torch.Tensor
++    :param b: 衰减率，须为负数
++    :type b: float
++    :param omega: 固有角频率，须为正数
++    :type omega: float
++    :param dt: 积分步长，须为正数
++    :type dt: float
++    :param v_threshold: 放电阈值
++    :type v_threshold: float
++    :param v_reset: 重置电位；``None`` 表示 soft reset
++    :type v_reset: Optional[float]
++    :param surrogate_function: 替代梯度函数
++    :type surrogate_function: Callable[[torch.Tensor], torch.Tensor]
++    :param detach_reset: 是否在重置分支中分离脉冲梯度
++    :type detach_reset: bool
++    :return: ``(spike, u_next, v_next)``
++    :rtype: tuple[torch.Tensor, torch.Tensor, torch.Tensor]
++
++    ----
++
++    .. _raf_step-en:
++
++    * **English**
++
++    Run one explicit state update of a resonate-and-fire (RAF) neuron.
++
++    The RAF neuron (Izhikevich, *Resonate-and-fire neurons*, Neural Networks
++    14 (2001) 883-894) is a 2-D linear subthreshold system, equivalently a
++    complex state :math:`z = u + iv` that rotates and decays at a fixed rate
++    :math:`b < 0` and intrinsic angular frequency :math:`\omega`:
++
++    .. math::
++
++        z[t] = z[t-1] \cdot \exp((b + i\omega)\,dt) + x[t]
++
++    The real component :math:`u` receives the input current; the imaginary
++    component :math:`v` is the firing component, giving damped subthreshold
++    oscillations and a preferential response to input near :math:`\omega`.
++    Expanded into two real states:
++
++    .. math::
++
++        u[t] &= \alpha (u[t-1]\cos\theta - v[t-1]\sin\theta) + x[t] \\
++        v[t] &= \alpha (u[t-1]\sin\theta + v[t-1]\cos\theta)
++
++    where :math:`\alpha = \exp(b\,dt)` and :math:`\theta = \omega\,dt`. Only
++    :math:`v` (the firing component) is reset after a spike; :math:`u` is left
++    untouched, which is what produces post-inhibitory rebound.
++
++    :param x: Current input tensor, shape ``[N, *]``
++    :type x: torch.Tensor
++    :param u: Current real-part state (receives the input), shape, dtype and
++        device compatible with ``x``
++    :type u: torch.Tensor
++    :param v: Current imaginary-part state (the firing component), shape, dtype
++        and device compatible with ``x``
++    :type v: torch.Tensor
++    :param b: Decay rate, must be negative
++    :type b: float
++    :param omega: Intrinsic angular frequency, must be positive
++    :type omega: float
++    :param dt: Integration step size, must be positive
++    :type dt: float
++    :param v_threshold: Firing threshold
++    :type v_threshold: float
++    :param v_reset: Reset voltage; ``None`` means soft reset
++    :type v_reset: Optional[float]
++    :param surrogate_function: Surrogate-gradient function
++    :type surrogate_function: Callable[[torch.Tensor], torch.Tensor]
++    :param detach_reset: Whether to detach spike in the voltage-reset branch
++    :type detach_reset: bool
++    :return: ``(spike, u_next, v_next)``
++    :rtype: tuple[torch.Tensor, torch.Tensor, torch.Tensor]
++    """
++    alpha = math.exp(b * dt)
++    cos_theta = math.cos(omega * dt)
++    sin_theta = math.sin(omega * dt)
++    u_charged = alpha * (u * cos_theta - v * sin_theta) + x
++    v_charged = alpha * (u * sin_theta + v * cos_theta)
++    spike = surrogate_function(v_charged - v_threshold)
++    v_next = voltage_reset(v_charged, spike, v_threshold, v_reset, detach_reset)
++    return spike, u_charged, v_next
++
++
+ def klif_step(
+     x: torch.Tensor,
+     v: torch.Tensor,
+diff --git a/spikingjelly/activation_based/neuron/__init__.py b/spikingjelly/activation_based/neuron/__init__.py
+index dae9c2be..f2a18d81 100644
+--- a/spikingjelly/activation_based/neuron/__init__.py
++++ b/spikingjelly/activation_based/neuron/__init__.py
+@@ -7,6 +7,7 @@
+ from .psn import *
+ from .adapt import *
+ from .nonlinear_if import *
++from .resonate import *
+ from .flexsn import *
+ from .few_spike import *
+ 
+diff --git a/spikingjelly/activation_based/neuron/resonate.py b/spikingjelly/activation_based/neuron/resonate.py
+new file mode 100644
+index 00000000..26dd6e08
+--- /dev/null
++++ b/spikingjelly/activation_based/neuron/resonate.py
+@@ -0,0 +1,219 @@
++from typing import Optional
++
++import torch
++
++from .. import functional, surrogate
++from .base_node import BaseNode
++
++
++__all__ = ["RAFNode"]
++
++
++class RAFNode(BaseNode):
++    def __init__(
++        self,
++        b: float = -0.2,
++        omega: float = 1.0,
++        dt: float = 1.0,
++        v_threshold: float = 1.0,
++        v_reset: Optional[float] = 0.0,
++        surrogate_function: surrogate.SurrogateFunctionBase = surrogate.Sigmoid(),
++        detach_reset: bool = False,
++        step_mode: str = "s",
++        backend: str = "torch",
++        store_v_seq: bool = False,
++    ) -> None:
++        r"""
++        **API Language** - :ref:`中文 <RAFNode.__init__-cn>` | :ref:`English <RAFNode.__init__-en>`
++
++        ----
++
++        .. _RAFNode.__init__-cn:
++
++        * **中文**
++
++        Resonate-and-fire (RAF) 神经元的构造函数（Izhikevich, *Resonate-and-fire
++        neurons*, Neural Networks 14 (2001) 883-894）。
++
++        与积分发放（IF/LIF/QIF/EIF/Izhikevich）神经元家族不同，RAF 神经元是一个
++        二维线性阈下*振荡*系统，而非积分器：等价于一个以固定衰减率 :math:`b < 0`
++        和固有角频率 :math:`\omega` 旋转衰减的复数状态 :math:`z = u + iv`，因此对
++        接近 :math:`\omega` 的输入频率有选择性响应，并表现出阈下阻尼振荡。
++
++        **阈下动力学方程**
++
++        .. math::
++
++            u[t] &= \alpha (u[t-1]\cos\theta - v[t-1]\sin\theta) + x[t] \\
++            v[t] &= \alpha (u[t-1]\sin\theta + v[t-1]\cos\theta)
++
++        其中 :math:`\alpha = \exp(b\,dt)`，:math:`\theta = \omega\,dt`。状态
++        由两个实数张量 ``self.u``（实部，接收输入）和 ``self.v``（虚部，放电分量）
++        表示，而非复数张量。放电依据 ``self.v`` 相对 ``v_threshold`` 判定；放电后
++        只重置 ``self.v``（复用 :class:`BaseNode` 的 soft/hard reset 规则），
++        ``self.u`` 不受影响 —— 这正是产生放电后反弹（post-inhibitory rebound）
++        的原因。
++
++        本次实现固定 :math:`b`、:math:`\omega`、:math:`dt`（不可学习），仅支持
++        ``'torch'`` 后端；可学习参数与其它后端留作后续工作。
++
++        :param b: 衰减率，须为负数
++        :type b: float
++        :param omega: 固有角频率，须为正数
++        :type omega: float
++        :param dt: 积分步长，须为正数
++        :type dt: float
++        :param v_threshold: 神经元的放电阈值
++        :type v_threshold: float
++        :param v_reset: 神经元的重置电压。若不为 ``None``，放电后 ``self.v``
++            将被重置为 ``v_reset``；若为 ``None``，则放电后 ``self.v`` 减去
++            ``v_threshold``。``self.u`` 在任一情况下都不重置
++        :type v_reset: Optional[float]
++        :param surrogate_function: 反向传播中用于近似阶跃函数梯度的替代函数
++        :type surrogate_function: surrogate.SurrogateFunctionBase
++        :param detach_reset: 是否在反向传播时将 reset 过程从计算图中分离
++        :type detach_reset: bool
++        :param step_mode: 步进模式，可选 ``'s'`` （单步）或 ``'m'`` （多步）
++        :type step_mode: str
++        :param backend: 计算后端。目前仅支持 ``'torch'``
++        :type backend: str
++        :param store_v_seq: 当 ``step_mode = 'm'`` 且输入形状为 ``[T, N, *]`` 时，
++            是否保存所有时间步的放电分量序列 ``self.v_seq``（形状为
++            ``[T, N, *]``）。若为 ``False``，仅保留最后一个时间步的 ``self.v``
++            （形状为 ``[N, *]``），以降低内存开销
++        :type store_v_seq: bool
++
++        ----
++
++        .. _RAFNode.__init__-en:
++
++        * **English**
++
++        Constructor of the resonate-and-fire (RAF) neuron (Izhikevich,
++        *Resonate-and-fire neurons*, Neural Networks 14 (2001) 883-894).
++
++        Unlike the integrate-and-fire family (IF/LIF/QIF/EIF/Izhikevich), the
++        RAF neuron is a 2-D linear subthreshold *oscillator*, not an
++        integrator: it is equivalent to a complex state :math:`z = u + iv`
++        that rotates and decays at a fixed rate :math:`b < 0` and intrinsic
++        angular frequency :math:`\omega`, so it responds preferentially to
++        input near :math:`\omega` and shows damped subthreshold oscillations.
++
++        **Sub-threshold neuronal dynamics**
++
++        .. math::
++
++            u[t] &= \alpha (u[t-1]\cos\theta - v[t-1]\sin\theta) + x[t] \\
++            v[t] &= \alpha (u[t-1]\sin\theta + v[t-1]\cos\theta)
++
++        where :math:`\alpha = \exp(b\,dt)` and :math:`\theta = \omega\,dt`.
++        State is two real-valued tensors, ``self.u`` (real part, receives the
++        input) and ``self.v`` (imaginary part, the firing component), not a
++        complex tensor. Firing is decided from ``self.v`` against
++        ``v_threshold``; only ``self.v`` is reset after a spike (reusing
++        :class:`BaseNode`'s soft/hard reset rule) — ``self.u`` is left
++        untouched, which is what produces post-inhibitory rebound.
++
++        This implementation fixes :math:`b`, :math:`\omega`, :math:`dt`
++        (not learnable) and supports the ``'torch'`` backend only; learnable
++        parameters and other backends are left for future work.
++
++        :param b: Decay rate, must be negative
++        :type b: float
++        :param omega: Intrinsic angular frequency, must be positive
++        :type omega: float
++        :param dt: Integration step size, must be positive
++        :type dt: float
++        :param v_threshold: Firing threshold of the neuron
++        :type v_threshold: float
++        :param v_reset: Reset voltage of the neuron. If not ``None``,
++            ``self.v`` will be reset to ``v_reset`` after firing; if ``None``,
++            ``v_threshold`` will be subtracted from ``self.v``. ``self.u`` is
++            never reset either way
++        :type v_reset: Optional[float]
++        :param surrogate_function: surrogate function used to approximate the
++            gradient of the Heaviside step function during backpropagation
++        :type surrogate_function: surrogate.SurrogateFunctionBase
++        :param detach_reset: whether to detach the reset operation from the
++            computation graph
++        :type detach_reset: bool
++        :param step_mode: step mode, either ``'s'`` (single-step) or ``'m'``
++            (multi-step)
++        :type step_mode: str
++        :param backend: backend for this neuron. Only ``'torch'`` is
++            currently supported
++        :type backend: str
++        :param store_v_seq: when ``step_mode = 'm'`` and input shape is
++            ``[T, N, *]``, whether to store the firing component at all time
++            steps in ``self.v_seq``. If ``False``, only the final ``self.v``
++            is kept, to reduce memory usage
++        :type store_v_seq: bool
++        """
++        assert isinstance(b, float) and b < 0.0
++        assert isinstance(omega, float) and omega > 0.0
++        assert isinstance(dt, float) and dt > 0.0
++
++        super().__init__(
++            v_threshold,
++            v_reset,
++            surrogate_function,
++            detach_reset,
++            step_mode,
++            backend,
++            store_v_seq,
++        )
++        self.register_memory("u", 0.0)
++        self.b = b
++        self.omega = omega
++        self.dt = dt
++
++    def extra_repr(self) -> str:
++        return super().extra_repr() + f", b={self.b}, omega={self.omega}, dt={self.dt}"
++
++    def materialize_states(
++        self,
++        inputs: tuple[torch.Tensor, ...],
++        states: tuple[object, ...],
++        step_mode: str,
++    ) -> tuple[object, ...]:
++        states = super().materialize_states(inputs, states, step_mode)
++        x = states[0]
++        u = states[-1]
++        if isinstance(u, float):
++            u = torch.full_like(x, u, requires_grad=False)
++        elif isinstance(u, torch.Tensor):
++            if u.shape != x.shape:
++                u = torch.full_like(x, 0.0, requires_grad=False)
++            elif u.dtype != x.dtype or u.device != x.device:
++                u = u.to(dtype=x.dtype, device=x.device)
++        return (*states[:-1], u)
++
++    def single_step_functional_forward(
++        self,
++        inputs: tuple[torch.Tensor, ...],
++        states: tuple[object, ...],
++        **kwargs: object,
++    ) -> tuple[tuple[torch.Tensor, ...], tuple[object, ...]]:
++        x = inputs[0]
++        v = states[0]
++        u = states[-1]
++        spike, u, v = functional.raf_step(
++            x,
++            u,
++            v,
++            self.b,
++            self.omega,
++            self.dt,
++            self.v_threshold,
++            self.v_reset,
++            self.surrogate_function,
++            self.detach_reset,
++        )
++        return (spike,), (v, u)
++
++    @property
++    def supported_backends(self) -> tuple[str, ...]:
++        if self.step_mode in ("s", "m"):
++            return ("torch",)
++        else:
++            raise ValueError(self.step_mode)
+diff --git a/test/activation_based/test_functional_neuron.py b/test/activation_based/test_functional_neuron.py
+index 959351f3..a54e2d09 100644
+--- a/test/activation_based/test_functional_neuron.py
++++ b/test/activation_based/test_functional_neuron.py
+@@ -513,6 +513,93 @@ def test_izhikevich_step_matches_module():
+     _assert_close(w_next, module.w)
+ 
+ 
++@pytest.mark.parametrize("v_reset", [0.0, None])
++@pytest.mark.parametrize("detach_reset", [False, True])
++def test_raf_step_matches_module(v_reset, detach_reset):
++    x = torch.randn(2, 3)
++    u = torch.randn(2, 3) * 0.3
++    v = torch.randn(2, 3) * 0.3
++    function_surrogate = _surrogate()
++    module = neuron.RAFNode(
++        b=-0.2,
++        omega=1.3,
++        dt=0.5,
++        v_threshold=0.5,
++        v_reset=v_reset,
++        surrogate_function=_surrogate(),
++        detach_reset=detach_reset,
++    )
++    module.u = u.clone()
++    module.v = v.clone()
++
++    spike, u_next, v_next = functional.raf_step(
++        x,
++        u,
++        v,
++        -0.2,
++        1.3,
++        0.5,
++        0.5,
++        v_reset,
++        function_surrogate,
++        detach_reset,
++    )
++    module_spike = module(x)
++
++    _assert_close(spike, module_spike)
++    _assert_close(u_next, module.u)
++    _assert_close(v_next, module.v)
++
++
++def test_raf_reset_only_touches_v():
++    # a spike must hard/soft-reset v but leave u exactly as the charge step
++    # produced it -- that is what gives post-inhibitory rebound.
++    for v_reset in (0.0, None):
++        module = neuron.RAFNode(
++            b=-0.2, omega=1.0, dt=1.0, v_threshold=0.3, v_reset=v_reset
++        )
++        module.u = torch.tensor([2.0])
++        module.v = torch.tensor([2.0])
++
++        reference = neuron.RAFNode(
++            b=-0.2, omega=1.0, dt=1.0, v_threshold=1e9, v_reset=v_reset
++        )
++        reference.u = torch.tensor([2.0])
++        reference.v = torch.tensor([2.0])
++
++        spike = module(torch.tensor([0.0]))
++        reference(torch.tensor([0.0]))
++
++        assert spike.item() == 1.0
++        _assert_close(module.u, reference.u)
++        if v_reset is None:
++            _assert_close(module.v, reference.v - module.v_threshold)
++        else:
++            _assert_close(module.v, torch.full_like(reference.v, v_reset))
++
++
++def test_raf_single_step_multi_step_equivalence():
++    torch.manual_seed(0)
++    x_seq = torch.randn(6, 2, 3)
++
++    single_step = neuron.RAFNode(b=-0.15, omega=0.8, dt=0.5, v_threshold=0.4)
++    single_spikes, single_u_steps, single_v_steps = [], [], []
++    for x in x_seq:
++        single_spikes.append(single_step(x))
++        single_u_steps.append(single_step.u.clone())
++        single_v_steps.append(single_step.v.clone())
++
++    multi_step = neuron.RAFNode(
++        b=-0.15, omega=0.8, dt=0.5, v_threshold=0.4, step_mode="m", store_v_seq=True
++    )
++    multi_spikes = multi_step(x_seq)
++
++    _assert_close(multi_spikes, torch.stack(single_spikes))
++    _assert_close(multi_step.v_seq, torch.stack(single_v_steps))
++    _assert_close(multi_step.v, single_step.v)
++    _assert_close(multi_step.u, single_step.u)
++
++
+ @pytest.mark.parametrize("scale_reset", [False, True])
+ def test_klif_step_matches_module(scale_reset):
+     x = torch.randn(2, 3)

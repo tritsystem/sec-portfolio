@@ -1,0 +1,218 @@
+diff --git a/ultralytics/models/sam/sam3/decoder.py b/ultralytics/models/sam/sam3/decoder.py
+index 7e67f2cf10b..0220ba31c5c 100644
+--- a/ultralytics/models/sam/sam3/decoder.py
++++ b/ultralytics/models/sam/sam3/decoder.py
+@@ -260,9 +260,6 @@ def __init__(
+             n_input = 4 if boxRPB == "both" else 2
+             self.boxRPB_embed_x = MLP(n_input, d_model, nheads, 2)
+             self.boxRPB_embed_y = MLP(n_input, d_model, nheads, 2)
+-            self.compilable_cord_cache = None
+-            self.compilable_stored_size = None
+-            self.coord_cache = {}
+ 
+         if interaction_layer is not None:
+             # Scoped for import ultralytics speed: ROI align requires optional torchvision ops.
+@@ -295,9 +292,8 @@ def __init__(
+         assert self.return_intermediate, "support return_intermediate only"
+         assert self.box_refine, "support box refine only"
+ 
+-        self.compile_mode = compile_mode
+-        self.compiled = False
+-        # We defer compilation till after the first forward, to first warm-up the boxRPB cache
++        if compile_mode is not None:
++            self.forward = torch.compile(self.forward, mode=compile_mode, fullgraph=True)
+ 
+         # assign layer index to each layer so that some layers can decide what to do
+         # based on which layer index they are (e.g. cross attention to memory bank only
+@@ -305,37 +301,13 @@ def __init__(
+         for layer_idx, decoder_layer in enumerate(self.layers):
+             decoder_layer.layer_idx = layer_idx
+ 
+-    @staticmethod
+-    def _get_coords(H, W, device, dtype):
+-        """Get normalized coordinates for height and width."""
+-        coords_h = torch.arange(0, H, dtype=dtype, device=device) / H
+-        coords_w = torch.arange(0, W, dtype=dtype, device=device) / W
+-        return coords_h, coords_w
+-
+     def _get_rpb_matrix(self, reference_boxes, feat_size):
+         """Get the relative position bias (RPB) matrix for box-relative position bias."""
+         H, W = feat_size
+         boxes_xyxy = xywh2xyxy(reference_boxes).transpose(0, 1)
+         bs, num_queries, _ = boxes_xyxy.shape
+-        if self.compilable_cord_cache is None:
+-            self.compilable_cord_cache = self._get_coords(H, W, reference_boxes.device, reference_boxes.dtype)
+-            self.compilable_stored_size = (H, W)
+-
+-        if torch.compiler.is_dynamo_compiling() or self.compilable_stored_size == (
+-            H,
+-            W,
+-        ):
+-            # good, hitting the cache, will be compilable
+-            coords_h, coords_w = self.compilable_cord_cache
+-        else:
+-            # cache miss, will create compilation issue
+-            # In case we're not compiling, we'll still rely on the dict-based cache
+-            if feat_size not in self.coord_cache:
+-                self.coord_cache[feat_size] = self._get_coords(H, W, reference_boxes.device, reference_boxes.dtype)
+-            coords_h, coords_w = self.coord_cache[feat_size]
+-
+-            assert coords_h.shape == (H,)
+-            assert coords_w.shape == (W,)
++        coords_h = torch.arange(H, device=reference_boxes.device, dtype=reference_boxes.dtype) / H
++        coords_w = torch.arange(W, device=reference_boxes.device, dtype=reference_boxes.dtype) / W
+ 
+         deltas_y = coords_h.view(1, -1, 1) - boxes_xyxy.reshape(-1, 1, 4)[:, :, 1:4:2]
+         deltas_y = deltas_y.view(bs, num_queries, -1, 2)
+@@ -384,7 +356,7 @@ def forward(
+         pos: torch.Tensor = None,
+         reference_boxes: torch.Tensor = None,  # num_queries, bs, 4
+         # for memory
+-        spatial_shapes: torch.Tensor = None,  # bs, num_levels, 2
++        spatial_shapes: list[tuple[int, int]] | None = None,  # height and width of each feature level
+         valid_ratios: torch.Tensor = None,
+         # for text
+         memory_text: torch.Tensor = None,
+@@ -462,11 +434,8 @@ def forward(
+             query_pos = self.ref_point_head(query_sine_embed)  # nq, bs, d_model
+ 
+             if self.boxRPB != "none" and reference_boxes is not None:
+-                assert spatial_shapes.shape[0] == 1, "only single scale support implemented"
+-                memory_mask = self._get_rpb_matrix(
+-                    reference_boxes,
+-                    (spatial_shapes[0, 0], spatial_shapes[0, 1]),
+-                )
++                assert len(spatial_shapes) == 1, "only single scale support implemented"
++                memory_mask = self._get_rpb_matrix(reference_boxes, spatial_shapes[0])
+                 memory_mask = memory_mask.flatten(0, 1)  # (bs*n_heads, nq, H*W)
+             if self.training:
+                 assert self.use_act_checkpoint, "Activation checkpointing not enabled in the decoder"
+@@ -531,10 +500,6 @@ def forward(
+                 intermediate_presence_logits.append(intermediate_layer_presence_logits)
+                 presence_feats = presence_out.clone()
+ 
+-        if not self.compiled and self.compile_mode is not None:
+-            self.forward = torch.compile(self.forward, mode=self.compile_mode, fullgraph=True)
+-            self.compiled = True
+-
+         return (
+             torch.stack(intermediate),
+             torch.stack(intermediate_ref_boxes),
+diff --git a/ultralytics/models/sam/sam3/encoder.py b/ultralytics/models/sam/sam3/encoder.py
+index 9f42740adad..686881a7b74 100644
+--- a/ultralytics/models/sam/sam3/encoder.py
++++ b/ultralytics/models/sam/sam3/encoder.py
+@@ -288,13 +288,8 @@ def _prepare_multilevel_features(self, srcs, masks, pos_embeds):
+         src_flatten = []
+         mask_flatten = []
+         lvl_pos_embed_flatten = []
+-        spatial_shapes = []
+         has_mask = masks is not None and masks[0] is not None
+         for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
+-            _, _, h, w = src.shape
+-            spatial_shape = (h, w)
+-            spatial_shapes.append(spatial_shape)
+-
+             src = src.flatten(2).transpose(1, 2)  # bs, hw, c
+             if has_mask:
+                 mask = mask.flatten(1)
+@@ -310,13 +305,6 @@ def _prepare_multilevel_features(self, srcs, masks, pos_embeds):
+         src_flatten = torch.cat(src_flatten, 1)  # bs, \sum{hxw}, c
+         mask_flatten = torch.cat(mask_flatten, 1) if has_mask else None  # bs, \sum{hxw}
+         lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)  # bs, \sum{hxw}, c
+-        spatial_shapes = torch.tensor(spatial_shapes, dtype=torch.long, device=src_flatten.device)
+-        level_start_index = torch.cat(
+-            (
+-                spatial_shapes.new_zeros((1,)),
+-                spatial_shapes.prod(1).cumsum(0)[:-1],
+-            )
+-        )
+         if has_mask:
+             valid_ratios = torch.stack([get_valid_ratio(m) for m in masks], 1)
+         else:
+@@ -330,9 +318,7 @@ def _prepare_multilevel_features(self, srcs, masks, pos_embeds):
+             src_flatten,
+             mask_flatten,
+             lvl_pos_embed_flatten,
+-            level_start_index,
+             valid_ratios,
+-            spatial_shapes,
+         )
+ 
+     def forward(
+@@ -343,7 +329,7 @@ def forward(
+         prompt: torch.Tensor = None,
+         prompt_key_padding_mask: torch.Tensor = None,
+         encoder_extra_kwargs: dict | None = None,
+-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
++    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+         """Process multi-level features through the transformer encoder.
+ 
+         Args:
+@@ -361,8 +347,6 @@ def forward(
+             - output: Processed features with shape (seq_len, batch_size, d_model)
+             - key_padding_masks_flatten: Flattened padding masks
+             - lvl_pos_embed_flatten: Flattened positional embeddings
+-            - level_start_index: Starting indices for each feature level
+-            - spatial_shapes: Spatial dimensions of each feature level
+             - valid_ratios: Valid ratios for each feature level
+         """
+         assert len(src) == self.num_feature_levels, "must be equal to num_feature_levels"
+@@ -375,9 +359,7 @@ def forward(
+             src_flatten,
+             key_padding_masks_flatten,
+             lvl_pos_embed_flatten,
+-            level_start_index,
+             valid_ratios,
+-            spatial_shapes,
+         ) = self._prepare_multilevel_features(src, src_key_padding_masks, pos)
+ 
+         output = src_flatten
+@@ -401,8 +383,6 @@ def forward(
+             output.transpose(0, 1),
+             (key_padding_masks_flatten.transpose(0, 1) if key_padding_masks_flatten is not None else None),
+             lvl_pos_embed_flatten.transpose(0, 1),
+-            level_start_index,
+-            spatial_shapes,
+             valid_ratios,
+         )
+ 
+@@ -488,8 +468,6 @@ def forward(
+             out,
+             key_padding_masks_flatten,
+             lvl_pos_embed_flatten,
+-            level_start_index,
+-            spatial_shapes,
+             valid_ratios,
+         ) = super().forward(
+             src,
+@@ -505,8 +483,6 @@ def forward(
+             "padding_mask": key_padding_masks_flatten,
+             "pos_embed": lvl_pos_embed_flatten,
+             "memory_text": prompt,
+-            "level_start_index": level_start_index,
+-            "spatial_shapes": spatial_shapes,
+             "valid_ratios": valid_ratios,
+         }
+ 
+diff --git a/ultralytics/models/sam/sam3/sam3_image.py b/ultralytics/models/sam/sam3/sam3_image.py
+index 1f377e6779c..c54b307963a 100644
+--- a/ultralytics/models/sam/sam3/sam3_image.py
++++ b/ultralytics/models/sam/sam3/sam3_image.py
+@@ -153,7 +153,6 @@ def _run_encoder(
+             "encoder_hidden_states": memory["memory"],
+             "pos_embed": memory["pos_embed"],
+             "padding_mask": memory["padding_mask"],
+-            "spatial_shapes": memory["spatial_shapes"],
+             "valid_ratios": memory["valid_ratios"],
+             "vis_feat_sizes": vis_feat_sizes,
+             # encoded text features (or other prompts)
+@@ -184,7 +183,7 @@ def _run_decoder(
+             memory_key_padding_mask=src_mask,
+             pos=pos_embed,
+             reference_boxes=None,
+-            spatial_shapes=encoder_out["spatial_shapes"],
++            spatial_shapes=encoder_out["vis_feat_sizes"],
+             valid_ratios=encoder_out["valid_ratios"],
+             tgt_mask=None,
+             memory_text=prompt,

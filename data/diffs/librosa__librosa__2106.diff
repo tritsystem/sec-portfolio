@@ -1,0 +1,332 @@
+diff --git a/librosa/core/convert.py b/librosa/core/convert.py
+index de422d9e7a..902d6928f7 100644
+--- a/librosa/core/convert.py
++++ b/librosa/core/convert.py
+@@ -4,7 +4,7 @@
+ from __future__ import annotations
+ 
+ import warnings
+-from typing import TYPE_CHECKING, cast, overload
++from typing import TYPE_CHECKING, overload
+ 
+ import numpy as np
+ 
+@@ -1366,7 +1366,9 @@ def tuning_to_A4(
+     return 440.0 * 2.0 ** (np.asanyarray(tuning)[()] / bins_per_octave)
+ 
+ 
+-def fft_frequencies(*, sr: float = 22050, n_fft: int = 2048) -> _Array1D[np.float64]:
++def fft_frequencies(
++    *, sr: float = 22050, n_fft: int = 2048, dtype: npt.DTypeLike = np.float64
++) -> np.ndarray:
+     """Alternative interface for `np.fft.rfftfreq`
+ 
+     Parameters
+@@ -1375,6 +1377,12 @@ def fft_frequencies(*, sr: float = 22050, n_fft: int = 2048) -> _Array1D[np.floa
+         Audio sampling rate
+     n_fft : int > 0 [scalar]
+         length of the FFT frame
++    dtype : np.dtype
++        The floating-point data type of the output array.
++        The default (``np.float64``) matches `np.fft.rfftfreq`.
++        Passing ``np.float32`` allocates the grid at single precision
++        up front, which lets callers keep a ``float32`` pipeline without
++        an extra copy.
+ 
+     Returns
+     -------
+@@ -1387,13 +1395,21 @@ def fft_frequencies(*, sr: float = 22050, n_fft: int = 2048) -> _Array1D[np.floa
+     array([     0.   ,   1378.125,   2756.25 ,   4134.375,
+              5512.5  ,   6890.625,   8268.75 ,   9646.875,  11025.   ])
+     """
+-    # the return dtype was unnecessarily broad in the numpy<2.5 dtype stubs
+-    return cast("_Array1D[np.float64]", np.fft.rfftfreq(n=n_fft, d=1.0 / sr))
++    # Construct the grid directly at the requested precision. This is
++    # equivalent to ``np.fft.rfftfreq(n=n_fft, d=1.0 / sr)`` for float64
++    # (bit-for-bit), but avoids a float64 allocation + copy when a narrower
++    # dtype is requested.
++    return np.arange(0, 1 + n_fft // 2, dtype=dtype) * (sr / n_fft)
+ 
+ 
+ def cqt_frequencies(
+-    n_bins: int, *, fmin: float, bins_per_octave: int = 12, tuning: float = 0.0
+-) -> _Array1D[np.float64]:
++    n_bins: int,
++    *,
++    fmin: float,
++    bins_per_octave: int = 12,
++    tuning: float = 0.0,
++    dtype: npt.DTypeLike = np.float64,
++) -> np.ndarray:
+     """Compute the center frequencies of Constant-Q bins.
+ 
+     Parameters
+@@ -1406,6 +1422,9 @@ def cqt_frequencies(
+         Number of bins per octave
+     tuning : float
+         Deviation from A440 tuning in fractional bins
++    dtype : np.dtype
++        The floating-point data type of the output array
++        (default: ``np.float64``).
+ 
+     Returns
+     -------
+@@ -1423,15 +1442,20 @@ def cqt_frequencies(
+     """
+     correction: float = 2.0 ** (float(tuning) / bins_per_octave)
+     frequencies: np.ndarray = 2.0 ** (
+-        np.arange(0, n_bins, dtype=float) / bins_per_octave
++        np.arange(0, n_bins, dtype=dtype) / bins_per_octave
+     )
+ 
+     return correction * fmin * frequencies
+ 
+ 
+ def mel_frequencies(
+-    n_mels: int = 128, *, fmin: float = 0.0, fmax: float = 11025.0, htk: bool = False
+-) -> _Array1D[np.float64]:
++    n_mels: int = 128,
++    *,
++    fmin: float = 0.0,
++    fmax: float = 11025.0,
++    htk: bool = False,
++    dtype: npt.DTypeLike = np.float64,
++) -> np.ndarray:
+     """Compute an array of acoustic frequencies tuned to the mel scale.
+ 
+     The mel scale is a quasi-logarithmic function of acoustic frequency
+@@ -1474,6 +1498,9 @@ def mel_frequencies(
+     htk : bool
+         If True, use HTK formula to convert Hz to mel.
+         Otherwise (False), use Slaney's Auditory Toolbox.
++    dtype : np.dtype
++        The floating-point data type of the output array
++        (default: ``np.float64``).
+ 
+     Returns
+     -------
+@@ -1506,14 +1533,18 @@ def mel_frequencies(
+     min_mel = hz_to_mel(fmin, htk=htk)
+     max_mel = hz_to_mel(fmax, htk=htk)
+ 
+-    mels = np.linspace(min_mel, max_mel, n_mels)
++    mels = np.linspace(min_mel, max_mel, n_mels, dtype=dtype)
+ 
+     return mel_to_hz(mels, htk=htk)
+ 
+ 
+ def tempo_frequencies(
+-    n_bins: int, *, hop_length: int = 512, sr: float = 22050
+-) -> _Array1D[np.float64]:
++    n_bins: int,
++    *,
++    hop_length: int = 512,
++    sr: float = 22050,
++    dtype: npt.DTypeLike = np.float64,
++) -> np.ndarray:
+     """Compute the frequencies (in beats per minute) corresponding to an onset auto-correlation or tempogram matrix.
+ 
+     Parameters
+@@ -1524,6 +1555,9 @@ def tempo_frequencies(
+         The number of samples between each bin
+     sr : number > 0
+         The audio sampling rate
++    dtype : np.dtype
++        The floating-point data type of the output array
++        (default: ``np.float64``).
+ 
+     Returns
+     -------
+@@ -1540,7 +1574,7 @@ def tempo_frequencies(
+     array([      inf,  2583.984,  1291.992, ...,     6.782,
+                6.764,     6.747])
+     """
+-    bin_frequencies = np.zeros(int(n_bins), dtype=np.float64)
++    bin_frequencies = np.zeros(int(n_bins), dtype=dtype)
+ 
+     bin_frequencies[0] = np.inf
+     bin_frequencies[1:] = 60.0 * sr / (hop_length * np.arange(1.0, n_bins))
+@@ -1549,8 +1583,12 @@ def tempo_frequencies(
+ 
+ 
+ def fourier_tempo_frequencies(
+-    *, sr: float = 22050, win_length: int = 384, hop_length: int = 512
+-) -> _Array1D[np.float64]:
++    *,
++    sr: float = 22050,
++    win_length: int = 384,
++    hop_length: int = 512,
++    dtype: npt.DTypeLike = np.float64,
++) -> np.ndarray:
+     """Compute the frequencies (in beats per minute) corresponding to a Fourier tempogram matrix.
+ 
+     Parameters
+@@ -1561,6 +1599,9 @@ def fourier_tempo_frequencies(
+         The number of frames per analysis window
+     hop_length : int > 0
+         The number of samples between each bin
++    dtype : np.dtype
++        The floating-point data type of the output array
++        (default: ``np.float64``).
+ 
+     Returns
+     -------
+@@ -1576,7 +1617,9 @@ def fourier_tempo_frequencies(
+     """
+     # sr / hop_length gets the frame rate
+     # multiplying by 60 turns frames / sec into frames / minute
+-    return fft_frequencies(sr=sr * 60 / float(hop_length), n_fft=win_length)
++    return fft_frequencies(
++        sr=sr * 60 / float(hop_length), n_fft=win_length, dtype=dtype
++    )
+ 
+ 
+ @overload
+diff --git a/librosa/feature/spectral.py b/librosa/feature/spectral.py
+index bf29b3a42e..22bdc20d6a 100644
+--- a/librosa/feature/spectral.py
++++ b/librosa/feature/spectral.py
+@@ -179,7 +179,7 @@ def spectral_centroid(
+ 
+     # Compute the center frequencies of each bin
+     if freq is None:
+-        freq = fft_frequencies(sr=sr, n_fft=n_fft)
++        freq = fft_frequencies(sr=sr, n_fft=n_fft, dtype=S.dtype)
+ 
+     if freq.ndim == 1:
+         # reshape for broadcasting
+@@ -337,7 +337,7 @@ def spectral_bandwidth(
+ 
+     # Compute the center frequencies of each bin
+     if freq is None:
+-        freq = fft_frequencies(sr=sr, n_fft=n_fft)
++        freq = fft_frequencies(sr=sr, n_fft=n_fft, dtype=S.dtype)
+ 
+     if freq.ndim == 1:
+         deviation = np.abs(
+@@ -471,7 +471,7 @@ def spectral_contrast(
+ 
+     # Compute the center frequencies of each bin
+     if freq is None:
+-        freq = fft_frequencies(sr=sr, n_fft=n_fft)
++        freq = fft_frequencies(sr=sr, n_fft=n_fft, dtype=S.dtype)
+ 
+     freq = np.atleast_1d(freq)
+ 
+@@ -499,7 +499,7 @@ def spectral_contrast(
+     shape = list(S.shape)
+     shape[-2] = n_bands + 1
+ 
+-    valley = np.zeros(shape)
++    valley = np.zeros(shape, dtype=S.dtype)
+     peak = np.zeros_like(valley)
+ 
+     for k, (f_low, f_high) in enumerate(itertools.pairwise(octa)):
+@@ -667,7 +667,7 @@ def spectral_rolloff(
+ 
+     # Compute the center frequencies of each bin
+     if freq is None:
+-        freq = fft_frequencies(sr=sr, n_fft=n_fft)
++        freq = fft_frequencies(sr=sr, n_fft=n_fft, dtype=S.dtype)
+ 
+     # Make sure that frequency can be broadcast
+     if freq.ndim == 1:
+@@ -682,7 +682,11 @@ def spectral_rolloff(
+     # reshape threshold for broadcasting
+     threshold = np.expand_dims(threshold, axis=-2)
+ 
+-    ind = np.where(total_energy < threshold, np.nan, 1)
++    # Allocate the mask at the spectrogram's precision so the following
++    # ``ind * freq`` does not promote a float32 pipeline to float64
++    # (``np.nan`` is a float64 scalar, which ``np.where`` would propagate).
++    ind = np.ones_like(total_energy)
++    ind[total_energy < threshold] = np.nan
+ 
+     rolloff: np.ndarray = np.nanmin(ind * freq, axis=-2, keepdims=True)
+     return rolloff
+@@ -1042,7 +1046,7 @@ def poly_features(
+ 
+     # Compute the center frequencies of each bin
+     if freq is None:
+-        freq = fft_frequencies(sr=sr, n_fft=n_fft)
++        freq = fft_frequencies(sr=sr, n_fft=n_fft, dtype=S.dtype)
+ 
+     coefficients: np.ndarray
+ 
+@@ -1064,7 +1068,10 @@ def poly_features(
+             -2, -1
+         )
+ 
+-    return coefficients
++    # `np.polyfit` always computes (and returns) in float64 for numerical
++    # stability; cast back to the spectrogram dtype so a float32 pipeline is
++    # preserved, consistent with the other spectral features.
++    return coefficients.astype(S.dtype, copy=False)
+ 
+ 
+ def zero_crossing_rate(
+diff --git a/tests/test_convert.py b/tests/test_convert.py
+index 8de9376912..4debe4df6a 100644
+--- a/tests/test_convert.py
++++ b/tests/test_convert.py
+@@ -325,6 +325,29 @@ def test_fft_frequencies(sr, n_fft):
+     assert np.allclose(dels, dels[0])
+ 
+ 
++@pytest.mark.parametrize("dtype", [np.float32, np.float64])
++@pytest.mark.parametrize(
++    "constructor",
++    [
++        lambda dtype: librosa.fft_frequencies(sr=22050, n_fft=1024, dtype=dtype),
++        lambda dtype: librosa.cqt_frequencies(24, fmin=32.7, dtype=dtype),
++        lambda dtype: librosa.mel_frequencies(40, dtype=dtype),
++        lambda dtype: librosa.tempo_frequencies(128, dtype=dtype),
++        lambda dtype: librosa.fourier_tempo_frequencies(dtype=dtype),
++    ],
++)
++def test_frequency_constructor_dtype(constructor, dtype):
++    # The frequency-grid constructors allocate at the requested precision.
++    # See https://github.com/librosa/librosa/issues/2099
++    assert constructor(dtype).dtype == dtype
++
++
++def test_fft_frequencies_dtype_values_unchanged():
++    # The default (float64) grid must stay bit-for-bit identical to rfftfreq.
++    ref = np.fft.rfftfreq(n=2048, d=1.0 / 22050)
++    assert np.array_equal(librosa.fft_frequencies(sr=22050, n_fft=2048), ref)
++
++
+ @pytest.mark.parametrize("n_bins", [12, 24, 36])
+ @pytest.mark.parametrize("fmin", [440.0])
+ @pytest.mark.parametrize("bins_per_octave", [12, 24, 36])
+diff --git a/tests/test_features.py b/tests/test_features.py
+index d4c9fed779..47f63a0c1a 100644
+--- a/tests/test_features.py
++++ b/tests/test_features.py
+@@ -169,6 +169,26 @@ def test_spectral_centroid_empty(y, sr, S):
+     assert not np.any(cent)
+ 
+ 
++@pytest.mark.parametrize("dtype", [np.float32, np.float64])
++@pytest.mark.parametrize(
++    "feature",
++    [
++        "spectral_centroid",
++        "spectral_bandwidth",
++        "spectral_rolloff",
++        "spectral_contrast",
++        "poly_features",
++    ],
++)
++def test_spectral_feature_dtype(feature, dtype, rng):
++    # regression: these features internally generate the FFT frequency grid,
++    # which used to be float64 and silently upcast a float32 spectrogram.
++    # See https://github.com/librosa/librosa/issues/2099
++    S = np.abs(rng.standard_normal(size=(1025, 10)).astype(dtype))
++    out = getattr(librosa.feature, feature)(S=S)
++    assert out.dtype == dtype
++
++
+ @pytest.mark.parametrize(
+     "freq",
+     [

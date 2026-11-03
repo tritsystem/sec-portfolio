@@ -1,0 +1,337 @@
+diff --git a/docs/snntorch.rst b/docs/snntorch.rst
+index 8aa09acb..37296355 100644
+--- a/docs/snntorch.rst
++++ b/docs/snntorch.rst
+@@ -47,7 +47,16 @@ The following arguments are common across most neuron models:
+ * **learn_beta** - setting to ``True`` enables the decay rate to be a learnable parameter
+ * **learn_threshold** - setting to ``True`` enables the threshold to be a learnable parameter 
+ * **reset_mechanism** - options include ``subtract`` (reset-by-subtraction), ``zero`` (reset-to-zero), and ``none`` (no reset mechanism: i.e., leaky integrator neuron)
+-* **output** - if ``init_hidden=True``, the spiking neuron will only return the output spikes. Setting ``output=True`` enables the hidden state(s) to be returned as well. Useful when using ``torch.nn.sequential``. 
++* **output** - if ``init_hidden=True``, the spiking neuron will only return the output spikes. Setting ``output=True`` enables the hidden state(s) to be returned as well. Useful when using ``torch.nn.sequential``.
++
++**Homeostasis (adaptive, time-varying threshold).** Every neuron built on :mod:`snntorch.SpikingNeuron` -- i.e. all of them -- can turn on spike-frequency adaptation by calling ``lif.enable_homeostasis(increment=0.5, tau=20.0, max_adapt=None)``. A per-neuron component is added on top of the static ``threshold``: it decays back toward 0 with time-constant ``tau`` every time step, and jumps up by ``increment`` for every neuron that fires. A neuron that has been firing raises its own effective threshold, so it fires progressively less until the adaptive component relaxes away -- classic intrinsic homeostatic plasticity, off by default and detached from the autograd graph (it is not learned by backprop, only the usual weights/``beta``/``threshold`` are). ``max_adapt`` optionally caps it. Use ``lif.reset_homeostasis()`` to clear the accumulated component, and ``lif.disable_homeostasis()`` to turn the mechanism off again (keeping the accumulated value)::
++
++      lif1 = snn.Leaky(beta=0.9)
++      lif1.enable_homeostasis(increment=0.5, tau=20.0)
++
++      mem1 = lif1.init_leaky()
++      for step in range(num_steps):
++          spk1, mem1 = lif1(cur1, mem1)   # firing rate self-limits under sustained drive
+ 
+ Leaky integrate-and-fire neuron models also include:
+ 
+diff --git a/snntorch/_neurons/neurons.py b/snntorch/_neurons/neurons.py
+index 8e8a02b9..c962c3de 100644
+--- a/snntorch/_neurons/neurons.py
++++ b/snntorch/_neurons/neurons.py
+@@ -1,3 +1,4 @@
++import math
+ from warnings import warn
+ from snntorch.surrogate import atan
+ import torch
+@@ -70,6 +71,97 @@ def __init__(
+ 
+         self.state_quant = state_quant
+ 
++        # Homeostatic (adaptive, time-varying) threshold -- opt-in, off by
++        # default. See enable_homeostasis(). Disabled, `fire()` /
++        # `fire_inhibition()` are byte-identical to before this was added.
++        self.register_buffer(
++            "_threshold_adapt", torch.zeros(0), persistent=False
++        )
++        self._homeostasis_enabled = False
++        self._adapt_increment = 0.0
++        self._adapt_decay = 0.0
++        self._adapt_max = None
++
++    def enable_homeostasis(self, increment=0.5, tau=20.0, max_adapt=None):
++        """Turn on an adaptive, time-varying component added to
++        :attr:`threshold`. Every call to :meth:`fire` (i.e. every time
++        step), the adaptive component decays toward 0 with time-constant
++        ``tau``, then -- after the firing decision -- jumps up by
++        ``increment`` for every neuron that just spiked. The net effect is
++        spike-frequency adaptation / intrinsic homeostatic plasticity: a
++        neuron that has been firing raises its own effective threshold,
++        making it progressively harder to fire, and that extra threshold
++        relaxes back to the static :attr:`threshold` once firing stops.
++
++        This mechanism is available on every neuron model built on
++        :class:`SpikingNeuron` (i.e. all of them) without any change to the
++        individual neuron classes, since they all call :meth:`fire` /
++        :meth:`fire_inhibition`.
++
++        The adaptive component is intentionally **not** learned by
++        backprop -- it is homeostatic bookkeeping updated from the
++        detached spike output, the same way :meth:`mem_reset` is detached.
++        Use ``learn_threshold`` for a backprop-trained *static* threshold.
++
++        :param increment: how much the effective threshold rises for each
++            spike emitted. Defaults to 0.5
++        :type increment: float, optional
++
++        :param tau: time-constant (in time steps) over which the adaptive
++            component decays back toward 0. Defaults to 20.0
++        :type tau: float, optional
++
++        :param max_adapt: if given, the adaptive component is clamped to
++            this value so a neuron under sustained strong drive does not
++            have its firing suppressed indefinitely. Defaults to None (no
++            cap).
++        :type max_adapt: float, optional
++        """
++        self._adapt_increment = float(increment)
++        self._adapt_decay = math.exp(-1.0 / float(tau))
++        self._adapt_max = None if max_adapt is None else float(max_adapt)
++        self._homeostasis_enabled = True
++
++    def disable_homeostasis(self):
++        """Turn off the adaptive threshold. The static :attr:`threshold`
++        is used as-is, exactly as if :meth:`enable_homeostasis` had never
++        been called. The accumulated adaptive component is kept (not
++        zeroed) so re-enabling resumes where it left off; call
++        :meth:`reset_homeostasis` to clear it."""
++        self._homeostasis_enabled = False
++
++    def reset_homeostasis(self):
++        """Clear the accumulated adaptive threshold component back to 0."""
++        self._threshold_adapt = torch.zeros_like(self._threshold_adapt)
++        return self._threshold_adapt
++
++    def _homeostasis_pre(self, mem):
++        """Decay the adaptive component and return this step's effective
++        threshold. A no-op (returns the static threshold) unless
++        :meth:`enable_homeostasis` has been called."""
++        if not self._homeostasis_enabled:
++            return self.threshold
++        if self._threshold_adapt.shape != mem.shape:
++            self._threshold_adapt = torch.zeros_like(mem)
++        self._threshold_adapt = self._threshold_adapt * self._adapt_decay
++        return self.threshold + self._threshold_adapt
++
++    def _homeostasis_post(self, spk):
++        """After the firing decision: bump the adaptive component for
++        every neuron that just spiked. Detached -- homeostasis is
++        bookkeeping driven by the (already detached-in-effect) spike
++        count, not a backprop-trained quantity."""
++        if not self._homeostasis_enabled:
++            return
++        self._threshold_adapt = (
++            self._threshold_adapt + self._adapt_increment * spk.detach()
++        )
++        if self._adapt_max is not None:
++            self._threshold_adapt = self._threshold_adapt.clamp(
++                max=self._adapt_max
++            )
++        self._threshold_adapt = self._threshold_adapt.detach()
++
+     def fire(self, mem):
+         """Generates spike if mem > threshold.
+         Returns spk."""
+@@ -77,8 +169,10 @@ def fire(self, mem):
+         if self.state_quant:
+             mem = self.state_quant(mem)
+ 
+-        mem_shift = mem - self.threshold
++        threshold_eff = self._homeostasis_pre(mem)
++        mem_shift = mem - threshold_eff
+         spk = self.spike_grad(mem_shift)
++        self._homeostasis_post(spk)
+ 
+         spk = spk * self.graded_spikes_factor
+ 
+@@ -88,13 +182,15 @@ def fire_inhibition(self, batch_size, mem):
+         """Generates spike if mem > threshold, only for the largest membrane.
+         All others neurons will be inhibited for that time step.
+         Returns spk."""
+-        mem_shift = mem - self.threshold
++        threshold_eff = self._homeostasis_pre(mem)
++        mem_shift = mem - threshold_eff
+         index = torch.argmax(mem_shift, dim=1)
+         spk_tmp = self.spike_grad(mem_shift)
+ 
+         mask_spk1 = torch.zeros_like(spk_tmp)
+         mask_spk1[torch.arange(batch_size), index] = 1
+         spk = spk_tmp * mask_spk1
++        self._homeostasis_post(spk)
+         # reset = spk.clone().detach()
+ 
+         return spk
+diff --git a/tests/test_snntorch/test_homeostasis.py b/tests/test_snntorch/test_homeostasis.py
+new file mode 100644
+index 00000000..613336ac
+--- /dev/null
++++ b/tests/test_snntorch/test_homeostasis.py
+@@ -0,0 +1,173 @@
++#!/usr/bin/env python
++
++"""Tests for the homeostatic (adaptive, time-varying) threshold, added to
++SpikingNeuron and inherited by every neuron model (issue #37)."""
++
++import math
++
++import pytest
++import snntorch as snn
++import torch
++
++
++class TestHomeostasis:
++    # ---------------------------------------------------------------- #
++    #  disabled by default -> zero regression
++    # ---------------------------------------------------------------- #
++    def test_disabled_by_default(self):
++        lif = snn.Leaky(beta=0.9)
++        assert lif._homeostasis_enabled is False
++
++    def test_matches_stock_behaviour_when_disabled(self):
++        torch.manual_seed(0)
++        x = torch.rand(20, 4, 3) * 3
++        lif_a = snn.Leaky(beta=0.9)
++        lif_b = snn.Leaky(beta=0.9)
++        mem_a = lif_a.init_leaky()
++        mem_b = lif_b.init_leaky()
++        for t in range(20):
++            spk_a, mem_a = lif_a(x[t], mem_a)
++            spk_b, mem_b = lif_b(x[t], mem_b)
++            assert torch.equal(spk_a, spk_b)
++            assert torch.equal(mem_a, mem_b)
++
++    # ---------------------------------------------------------------- #
++    #  raises the effective threshold on firing  (Bar: SFA)
++    # ---------------------------------------------------------------- #
++    def test_threshold_rises_after_spiking(self):
++        lif = snn.Leaky(beta=0.9)
++        lif.enable_homeostasis(increment=1.0, tau=20.0)
++        mem = lif.init_leaky()
++        spk, mem = lif(torch.tensor([[2.0]]), mem)
++        assert spk.item() == 1.0
++        assert lif._threshold_adapt.item() == pytest.approx(1.0)
++
++    def test_adaptation_suppresses_firing_rate_under_constant_drive(self):
++        torch.manual_seed(0)
++        x = torch.full((1, 8), 2.0)
++
++        lif = snn.Leaky(beta=0.9)
++        lif.enable_homeostasis(increment=1.2, tau=25.0)
++        mem = lif.init_leaky()
++        rates = []
++        for t in range(200):
++            spk, mem = lif(x, mem)
++            rates.append(spk.mean().item())
++        early = sum(rates[:20]) / 20
++        late = sum(rates[180:200]) / 20
++        # spike-frequency adaptation: firing rate under constant drive
++        # settles LOWER than it started, and stays there (steady state)
++        assert late < early
++        assert sum(rates[100:120]) / 20 == pytest.approx(late, abs=0.1)
++
++        # a non-adaptive control fires at a constant (non-decreasing) rate
++        lif_ctrl = snn.Leaky(beta=0.9)
++        mem_c = lif_ctrl.init_leaky()
++        rates_c = []
++        for t in range(200):
++            spk, mem_c = lif_ctrl(x, mem_c)
++            rates_c.append(spk.mean().item())
++        early_c = sum(rates_c[:20]) / 20
++        late_c = sum(rates_c[180:200]) / 20
++        assert late_c == pytest.approx(early_c, abs=1e-6)
++
++    # ---------------------------------------------------------------- #
++    #  decays back to steady state  (Bar: decay time-constant)
++    # ---------------------------------------------------------------- #
++    def test_decays_exponentially_with_tau_when_drive_stops(self):
++        lif = snn.Leaky(beta=0.9)
++        lif.enable_homeostasis(increment=2.0, tau=10.0)
++        mem = lif.init_leaky()
++        for _ in range(20):
++            _, mem = lif(torch.tensor([[2.0]]), mem)
++        a0 = lif._threshold_adapt.clone()
++
++        zero = torch.tensor([[0.0]])
++        for _ in range(15):
++            _, mem = lif(zero, mem)
++        a15 = lif._threshold_adapt.item()
++
++        expected = a0.item() * math.exp(-15.0 / 10.0)
++        assert a15 == pytest.approx(expected, rel=1e-4)
++
++    # ---------------------------------------------------------------- #
++    #  saturates  (Bar: max_adapt)
++    # ---------------------------------------------------------------- #
++    def test_saturates_at_max_adapt(self):
++        lif = snn.Leaky(beta=0.99)
++        lif.enable_homeostasis(increment=5.0, tau=1000.0, max_adapt=3.0)
++        mem = lif.init_leaky()
++        strong = torch.tensor([[50.0]])
++        for _ in range(50):
++            _, mem = lif(strong, mem)
++        assert lif._threshold_adapt.item() <= 3.0 + 1e-6
++
++    def test_no_cap_when_max_adapt_none(self):
++        lif = snn.Leaky(beta=0.99)
++        lif.enable_homeostasis(increment=5.0, tau=1000.0, max_adapt=None)
++        mem = lif.init_leaky()
++        strong = torch.tensor([[50.0]])
++        for _ in range(20):
++            _, mem = lif(strong, mem)
++        assert lif._threshold_adapt.item() > 3.0
++
++    # ---------------------------------------------------------------- #
++    #  reset / disable
++    # ---------------------------------------------------------------- #
++    def test_reset_homeostasis_clears_state(self):
++        lif = snn.Leaky(beta=0.9)
++        lif.enable_homeostasis(increment=1.0, tau=10.0)
++        mem = lif.init_leaky()
++        for _ in range(10):
++            _, mem = lif(torch.tensor([[2.0]]), mem)
++        assert lif._threshold_adapt.item() > 0
++        lif.reset_homeostasis()
++        assert lif._threshold_adapt.item() == 0.0
++
++    def test_disable_homeostasis_reverts_to_static_threshold(self):
++        lif = snn.Leaky(beta=0.9)
++        lif.enable_homeostasis(increment=1.0, tau=10.0)
++        mem = lif.init_leaky()
++        for _ in range(10):
++            _, mem = lif(torch.tensor([[2.0]]), mem)
++        assert lif._threshold_adapt.item() > 0
++        lif.disable_homeostasis()
++        # once disabled, fire() uses the static threshold again -- the
++        # (retained) adaptive component is simply not applied
++        spk, mem2 = lif(torch.tensor([[2.0]]), mem)
++        lif2 = snn.Leaky(beta=0.9)
++        spk2, _ = lif2(torch.tensor([[2.0]]), mem)
++        assert torch.equal(spk, spk2)
++
++    # ---------------------------------------------------------------- #
++    #  available on every neuron model, unmodified files  (the actual ask)
++    # ---------------------------------------------------------------- #
++    @pytest.mark.parametrize(
++        "make_neuron",
++        [
++            lambda: snn.Leaky(beta=0.9),
++            lambda: snn.Synaptic(alpha=0.9, beta=0.8),
++            lambda: snn.Lapicque(beta=0.9),
++        ],
++    )
++    def test_enable_homeostasis_available_on_every_lif_variant(
++        self, make_neuron
++    ):
++        neuron = make_neuron()
++        assert hasattr(neuron, "enable_homeostasis")
++        neuron.enable_homeostasis(increment=0.5, tau=15.0)
++        assert neuron._homeostasis_enabled is True
++
++    # ---------------------------------------------------------------- #
++    #  detached from the graph (per the issue's own speculation)
++    # ---------------------------------------------------------------- #
++    def test_adaptive_component_does_not_require_grad(self):
++        lif = snn.Leaky(beta=0.9, learn_beta=True)
++        lif.enable_homeostasis(increment=1.0, tau=10.0)
++        mem = lif.init_leaky()
++        x = torch.tensor([[2.0]], requires_grad=True)
++        spk, mem = lif(x, mem)
++        assert lif._threshold_adapt.requires_grad is False
++        spk.sum().backward()
++        assert x.grad is not None
++        assert lif.beta.grad is not None

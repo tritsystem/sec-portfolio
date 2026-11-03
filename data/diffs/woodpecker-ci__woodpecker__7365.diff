@@ -1,0 +1,85 @@
+diff --git a/server/store/datastore/registry.go b/server/store/datastore/registry.go
+index 134707de283..134373da5ce 100644
+--- a/server/store/datastore/registry.go
++++ b/server/store/datastore/registry.go
+@@ -33,8 +33,8 @@ func (s storage) RegistryList(repo *model.Repo, includeGlobalAndOrg bool, p *mod
+ 	var regs []*model.Registry
+ 	var cond builder.Cond = builder.Eq{"repo_id": repo.ID}
+ 	if includeGlobalAndOrg {
+-		cond = cond.Or(builder.Eq{"org_id": repo.OrgID}).
+-			Or(builder.And(builder.Eq{"org_id": 0}, builder.Eq{"repo_id": 0}))
++		cond = cond.Or(builder.Eq{"org_id": repo.OrgID, "repo_id": 0}).
++			Or(builder.Eq{"org_id": 0, "repo_id": 0})
+ 	}
+ 	return regs, s.paginate(p).Where(cond).OrderBy(orderRegistriesBy).Find(&regs)
+ }
+diff --git a/server/store/datastore/registry_test.go b/server/store/datastore/registry_test.go
+index 20167b1046a..51237a41be3 100644
+--- a/server/store/datastore/registry_test.go
++++ b/server/store/datastore/registry_test.go
+@@ -66,6 +66,23 @@ func TestRegistryList(t *testing.T) {
+ 	assert.Len(t, list, 2)
+ }
+ 
++func TestRegistryListOrgZeroIsolation(t *testing.T) {
++	store, closer := newTestStore(t, new(model.Registry))
++	defer closer()
++
++	assert.NoError(t, store.RegistryCreate(&model.Registry{
++		RepoID:   1,
++		OrgID:    0,
++		Address:  "victim-registry.example.com",
++		Username: "foo",
++		Password: "top-secret-password",
++	}))
++
++	list, err := store.RegistryList(&model.Repo{ID: 2, OrgID: 0}, true, &model.ListOptionsWithAll{ListOptions: &model.ListOptions{Page: 1, PerPage: 50}})
++	assert.NoError(t, err)
++	assert.Empty(t, list, "repo 2 (OrgID 0) must not see repo 1's repo-scoped registry just because both have OrgID 0")
++}
++
+ func TestRegistryUpdate(t *testing.T) {
+ 	store, closer := newTestStore(t, new(model.Registry))
+ 	defer closer()
+diff --git a/server/store/datastore/secret.go b/server/store/datastore/secret.go
+index 44e39c68c43..4b6dc7b4a33 100644
+--- a/server/store/datastore/secret.go
++++ b/server/store/datastore/secret.go
+@@ -33,8 +33,8 @@ func (s storage) SecretList(repo *model.Repo, includeGlobalAndOrgSecrets bool, p
+ 	var secrets []*model.Secret
+ 	var cond builder.Cond = builder.Eq{"repo_id": repo.ID}
+ 	if includeGlobalAndOrgSecrets {
+-		cond = cond.Or(builder.Eq{"org_id": repo.OrgID}).
+-			Or(builder.And(builder.Eq{"org_id": 0}, builder.Eq{"repo_id": 0}))
++		cond = cond.Or(builder.Eq{"org_id": repo.OrgID, "repo_id": 0}).
++			Or(builder.Eq{"org_id": 0, "repo_id": 0})
+ 	}
+ 	return secrets, s.paginate(p).Where(cond).OrderBy(orderSecretsBy).Find(&secrets)
+ }
+diff --git a/server/store/datastore/secret_test.go b/server/store/datastore/secret_test.go
+index ea3dd26ad58..810019ecc34 100644
+--- a/server/store/datastore/secret_test.go
++++ b/server/store/datastore/secret_test.go
+@@ -80,6 +80,22 @@ func TestSecretPipelineList(t *testing.T) {
+ 	assert.Len(t, list, 4)
+ }
+ 
++func TestSecretListOrgZeroIsolation(t *testing.T) {
++	store, closer := newTestStore(t, new(model.Secret))
++	defer closer()
++
++	assert.NoError(t, store.SecretCreate(&model.Secret{
++		RepoID: 1,
++		OrgID:  0,
++		Name:   "repo1-only-secret",
++		Value:  "top-secret-value",
++	}))
++
++	list, err := store.SecretList(&model.Repo{ID: 2, OrgID: 0}, true, &model.ListOptionsWithAll{ListOptions: &model.ListOptions{Page: 1, PerPage: 50}})
++	assert.NoError(t, err)
++	assert.Empty(t, list, "repo 2 (OrgID 0) must not see repo 1's repo-scoped secret just because both have OrgID 0")
++}
++
+ func TestSecretUpdate(t *testing.T) {
+ 	store, closer := newTestStore(t, new(model.Secret))
+ 	defer closer()

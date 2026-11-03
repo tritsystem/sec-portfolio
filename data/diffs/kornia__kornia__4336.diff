@@ -1,0 +1,83 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 1b89f0af32..68642eba6f 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -352,6 +352,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
+ ### Bug fixes
+ 
+ 
++* `bbox_to_mask` built its pixel-position grid in the box dtype. With `float16` boxes (and
++  `bfloat16` boxes) on images wider or taller than 2048 px (256 px for `bfloat16`) consecutive
++  pixel positions collapsed, so rows and columns near the collapse were mismasked; the grid is
++  now built in `float32` and `float16`/`bfloat16` results are byte-identical to `float32`/`float64`.
++  `RandomErasing` and `RandomCutMixV2` build their masks through it. (#4336)
++
+ * `kornia.io.load_image` and `write_image` work on the kornia_rs that a plain `pip install kornia`
+   resolves. kornia_rs 0.1.11 moved its image readers and writers from the package root into
+   `kornia_rs.io`, and kornia kept calling the root, so on 0.1.11 and newer `load_image` raised
+diff --git a/kornia/geometry/bbox.py b/kornia/geometry/bbox.py
+index 8cc2ded42d..d0c00f0c8e 100644
+--- a/kornia/geometry/bbox.py
++++ b/kornia/geometry/bbox.py
+@@ -313,6 +313,12 @@ def bbox_to_mask(boxes: torch.Tensor, width: int, height: int) -> torch.Tensor:
+     Note:
+         It is currently non-differentiable.
+ 
++    Note:
++        The pixel-position grid is built in ``float32`` regardless of ``boxes.dtype``, so
++        ``float16``/``bfloat16`` boxes are masked exactly even on images wider or taller than
++        the integer-exact range of those dtypes (2048 px for ``float16``, 256 px for
++        ``bfloat16``). The result is still returned in ``boxes.dtype``.
++
+     Examples:
+         >>> boxes = torch.tensor([[
+         ...        [1., 1.],
+@@ -335,8 +341,16 @@ def bbox_to_mask(boxes: torch.Tensor, width: int, height: int) -> torch.Tensor:
+     # (`torch.any(...)` -> Python `if`) that blocked torch.compile fullgraph (e.g. RandomErasing,
+     # which builds its mask through this function). Dropped; behaviour is byte-identical.
+     # zero padding the surroundings
+-    yy = torch.arange(height, device=boxes.device, dtype=boxes.dtype).view(height, 1)
+-    xx = torch.arange(width, device=boxes.device, dtype=boxes.dtype).view(1, width)
++    # Built at a fixed float32 regardless of boxes.dtype: these are exact pixel
++    # indices, and float16 can only represent integers exactly up to 2048 --
++    # beyond that, consecutive positions collapse onto the same value, so a
++    # float16 `boxes` on an image taller/wider than 2048px silently mismasks
++    # rows/columns near the collapse. The grid-vs-boxes comparisons below
++    # promote to the wider of the two dtypes (float32 for float16/bfloat16/
++    # float32 boxes, float64 for float64 boxes), so nothing downstream loses
++    # precision; the returned mask still casts back to boxes.dtype as documented.
++    yy = torch.arange(height, device=boxes.device, dtype=torch.float32).view(height, 1)
++    xx = torch.arange(width, device=boxes.device, dtype=torch.float32).view(1, width)
+     x_min = boxes[:, 0, 0].view(-1, 1, 1)
+     y_min = boxes[:, 0, 1].view(-1, 1, 1)
+     x_max = boxes[:, 2, 0].view(-1, 1, 1)
+diff --git a/tests/geometry/test_bbox.py b/tests/geometry/test_bbox.py
+index 6e2f0f2011..25f740127d 100644
+--- a/tests/geometry/test_bbox.py
++++ b/tests/geometry/test_bbox.py
+@@ -280,6 +280,25 @@ def test_wart_bbox_to_mask_compares_raw_floats_inclusively_4015(self, device, dt
+         fractional = torch.tensor([[[1.4, 1.4], [3.6, 1.4], [3.6, 2.6], [1.4, 2.6]]], device=device, dtype=dtype)
+         assert bbox_to_mask(fractional, 6, 5).sum().item() == 2.0
+ 
++    @pytest.mark.parametrize("half_dtype", [torch.float16, torch.bfloat16])
++    def test_bbox_to_mask_position_grid_is_exact_for_half_boxes_on_a_large_image(self, device, half_dtype):
++        # float16/bfloat16 can only represent consecutive integers exactly up to 2048 px /
++        # 256 px; beyond that, adjacent pixel positions collapse onto the same value.
++        # bbox_to_mask's position grid used to be built at boxes.dtype, so a half-precision
++        # `boxes` on an image past that threshold silently mismasked rows/columns near the
++        # collapse. Compare against the float32 result for the same region on a 4096x4096
++        # image -- well past the threshold on both axes for either half dtype. Coordinates
++        # 1000 / 3072 / 4080 are exactly representable in both half dtypes, so the half box
++        # covers exactly the same rectangle as the float32 one.
++        boxes32 = torch.tensor(
++            [[[1000.0, 1000.0], [4080.0, 1000.0], [4080.0, 3072.0], [1000.0, 3072.0]]], device=device
++        )
++        boxes_half = boxes32.to(half_dtype)
++        mask32 = bbox_to_mask(boxes32, width=4096, height=4096)
++        mask_half = bbox_to_mask(boxes_half, width=4096, height=4096)
++        assert mask_half.dtype == half_dtype
++        assert torch.equal(mask_half.bool(), mask32.bool())
++
+     def test_convention_bbox_generator_far_corner_is_start_plus_size_minus_one_3934(self, device, dtype):
+         # Convention pin (kornia#3934 tracks the inclusive arithmetic): width 3 from x=1 places
+         # the right edge at x=3, which infer_bbox_shape reads back as width 3. A scalar input is a

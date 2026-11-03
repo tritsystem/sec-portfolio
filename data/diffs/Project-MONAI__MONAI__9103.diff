@@ -1,0 +1,40 @@
+diff --git a/monai/losses/barlow_twins.py b/monai/losses/barlow_twins.py
+index 699594493c..dd38577eb3 100644
+--- a/monai/losses/barlow_twins.py
++++ b/monai/losses/barlow_twins.py
+@@ -78,7 +78,7 @@ def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+         c = torch.mm(input_norm.t(), target_norm) / batch_size  # input_norm.t() is FxB, target_norm is BxF so c is FxF
+ 
+         # loss
+-        c_diff = (c - torch.eye(c.size(0), device=c.device)).pow_(2)  # FxF
++        c_diff = (c - torch.eye(c.size(0), dtype=c.dtype, device=c.device)).pow_(2)  # FxF
+         c_diff[~torch.eye(c.size(0), device=c.device).bool()] *= lambd_tensor
+ 
+         return c_diff.sum()
+diff --git a/tests/losses/test_barlow_twins_loss.py b/tests/losses/test_barlow_twins_loss.py
+index 81f4032e0c..5568464730 100644
+--- a/tests/losses/test_barlow_twins_loss.py
++++ b/tests/losses/test_barlow_twins_loss.py
+@@ -104,6 +104,22 @@ def check_warning_raised(self):
+         with self.assertWarns(Warning):
+             BarlowTwinsLoss(lambd=5e-3, batch_size=1)
+ 
++    @parameterized.expand([(torch.float64,), (torch.float32,), (torch.bfloat16,), (torch.float16,)])
++    def test_preserves_input_dtype(self, dtype):
++        """Check that the loss keeps the dtype of its inputs.
++
++        The cross-correlation matrix `c` follows the input dtype, but `c - torch.eye(...)` used to silently upcast
++        to float32 whenever the dtype was below float32, because `torch.eye()` was never given an explicit dtype.
++
++        Args:
++            dtype: floating-point dtype of the two input tensors, which the returned loss must also have.
++        """
++        loss = BarlowTwinsLoss(lambd=5e-3)
++        i = torch.randn(4, 8, dtype=dtype)
++        j = torch.randn(4, 8, dtype=dtype)
++        output = loss(i, j)
++        self.assertEqual(output.dtype, dtype)
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

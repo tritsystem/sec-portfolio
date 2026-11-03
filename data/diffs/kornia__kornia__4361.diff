@@ -1,0 +1,103 @@
+diff --git a/changelog.d/4361.fixed.md b/changelog.d/4361.fixed.md
+new file mode 100644
+index 0000000000..94dcc1b436
+--- /dev/null
++++ b/changelog.d/4361.fixed.md
+@@ -0,0 +1 @@
++`kornia.geometry.subpix.render_gaussian2d` no longer distorts the rendered Gaussian's peak location on large grids for `float16` and `bfloat16` inputs. The pixel-coordinate linspace was built at the input dtype, so distinct coordinates collapsed together once `width`/`height` exceeded what the dtype represents exactly: about 2048 for `float16` and about 256 for `bfloat16`. The coordinate vectors are now built at `float32` for half-precision inputs, and the result is returned in the original dtype. Half-precision outputs of this function change bitwise (in a random-input check against the previous code every grid from 5x7 up differed, and a 1x1 grid did not), so stored regression baselines for half-precision inputs need regenerating.
+diff --git a/kornia/geometry/subpix/dsnt.py b/kornia/geometry/subpix/dsnt.py
+index cb90946f87..a2fe774819 100644
+--- a/kornia/geometry/subpix/dsnt.py
++++ b/kornia/geometry/subpix/dsnt.py
+@@ -142,13 +142,16 @@ def render_gaussian2d(
+     dtype = mean.dtype
+     device = mean.device
+ 
+-    # Create coordinates vectors.
++    # Build the coordinate vectors at float32 for half-precision inputs: float16 only represents
++    # integers exactly up to 2048 and bfloat16 up to 256, so a linspace built at `dtype` collapses
++    # distinct pixel coordinates on large grids. Other dtypes keep their own precision.
++    compute_dtype = torch.float32 if dtype in (torch.float16, torch.bfloat16) else dtype
+     if normalized_coordinates:
+-        xs = torch.linspace(-1, 1, width, device=device, dtype=dtype)
+-        ys = torch.linspace(-1, 1, height, device=device, dtype=dtype)
++        xs = torch.linspace(-1, 1, width, device=device, dtype=compute_dtype)
++        ys = torch.linspace(-1, 1, height, device=device, dtype=compute_dtype)
+     else:
+-        xs = torch.linspace(0, width - 1, width, device=device, dtype=dtype)
+-        ys = torch.linspace(0, height - 1, height, device=device, dtype=dtype)
++        xs = torch.linspace(0, width - 1, width, device=device, dtype=compute_dtype)
++        ys = torch.linspace(0, height - 1, height, device=device, dtype=compute_dtype)
+ 
+     mu_x = mean[..., 0].unsqueeze(-1)
+     mu_y = mean[..., 1].unsqueeze(-1)
+@@ -175,4 +178,5 @@ def render_gaussian2d(
+     gauss_x = gauss_x / (gauss_x.sum(dim=-1, keepdim=True) + 1e-8)
+     gauss_y = gauss_y / (gauss_y.sum(dim=-1, keepdim=True) + 1e-8)
+ 
+-    return gauss_y.unsqueeze(-1) * gauss_x.unsqueeze(-2)
++    # Cast the 1-D vectors, not the (*, H, W) outer product, to avoid a full-size float32 intermediate.
++    return gauss_y.to(dtype).unsqueeze(-1) * gauss_x.to(dtype).unsqueeze(-2)
+diff --git a/testing/half_precision_eager_rng.py b/testing/half_precision_eager_rng.py
+index 7357ef6a62..a011c6f52b 100644
+--- a/testing/half_precision_eager_rng.py
++++ b/testing/half_precision_eager_rng.py
+@@ -188,7 +188,7 @@ def _audited(
+             ),
+             *_audited(
+                 "tests/geometry/subpix/test_dsnt.py",
+-                73,
++                112,
+                 "torch.randn",
+                 1,
+                 (
+diff --git a/tests/geometry/subpix/test_dsnt.py b/tests/geometry/subpix/test_dsnt.py
+index 64eda9d561..9bec351f30 100644
+--- a/tests/geometry/subpix/test_dsnt.py
++++ b/tests/geometry/subpix/test_dsnt.py
+@@ -68,6 +68,45 @@ def test_dynamo(self, device, dtype, torch_optimizer):
+ 
+         self.assert_close(res_orig, res_opt)
+ 
++    @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
++    @pytest.mark.parametrize("normalized", [False, True])
++    @pytest.mark.parametrize("axis", ["x", "y"])
++    # 2049.3 is above float16's exact-integer limit (2048); 1500.2 is below it, where only bfloat16 (limit 256)
++    # collapses. One mean is not enough: bfloat16 in normalized mode is 1 px off at 2049.3 but 7 px off at 1500.2.
++    @pytest.mark.parametrize("mu", [2049.3, 1500.2])
++    def test_large_grid_peak_not_distorted(self, device, dtype, normalized, axis, mu):
++        """The coordinate grid must not collapse in half precision (float16 above 2048, bfloat16 above ~256)."""
++        n = 2200
++        size = (10, n) if axis == "x" else (n, 10)
++        mu_norm = mu / (n - 1) * 2 - 1
++        mean_xy = [mu, 5.0] if axis == "x" else [5.0, mu]
++        std_xy = [2.0, 2.0]
++        if normalized:
++            mean_xy = [mu_norm, 0.0] if axis == "x" else [0.0, mu_norm]
++            # A sigma of 6 pixels on EACH axis, expressed in that axis's own normalized units. Wide enough to keep
++            # 1 / sigma**2 inside the float16 range on the long axis, and (unlike one shared value) still wide enough
++            # to cover grid points on the short axis, where a tiny sigma makes the whole heatmap round to zero.
++            (h, w) = size
++            std_xy = [6.0 * 2 / (w - 1), 6.0 * 2 / (h - 1)]
++        mean = torch.tensor([mean_xy], dtype=dtype, device=device)
++        std = torch.tensor([std_xy], dtype=dtype, device=device)
++
++        heatmap = kornia.geometry.subpix.render_gaussian2d(mean, std, size, normalized)
++
++        assert heatmap.dtype == dtype
++        # Compare against the mean as actually stored (post half rounding), so only the grid is under test.
++        stored = mean[0, 0 if axis == "x" else 1].item()
++        expected = round((stored + 1) / 2 * (n - 1)) if normalized else round(stored)
++        line = heatmap[0, 5] if axis == "x" else heatmap[0, :, 5]
++        # Guard against a vacuous pass: an all-zero line satisfies `line[expected] == line.max()` as 0 == 0.
++        assert line.max() > 0, "heatmap rounded entirely to zero, so the peak position is not being tested"
++        # A collapsed coordinate grid does not move the peak to one wrong pixel, it smears the maximum over a
++        # plateau of tied pixels, so `line[expected] == line.max()` alone accepts any plateau containing `expected`.
++        # Require every tied maximum to sit within one pixel of it (a tie between two neighbours is legitimate).
++        assert line[expected] == line.max()
++        tied = (line == line.max()).nonzero().flatten()
++        assert (tied - expected).abs().max() <= 1, f"peak plateau {tied.tolist()} is not centred on pixel {expected}"
++
+ 
+ class TestSpatialSoftmax2d(BaseTester):
+     @pytest.fixture(params=[torch.ones(1, 1, 5, 7), torch.randn(2, 3, 16, 16)])

@@ -1,0 +1,12 @@
+diff --git a/libpromises/dbm_test_api.c b/libpromises/dbm_test_api.c
+index 0ea5ba94e71..f729795047a 100644
+--- a/libpromises/dbm_test_api.c
++++ b/libpromises/dbm_test_api.c
+@@ -713,6 +713,7 @@ void RemoveFilament(DBFilament *filament)
+     {
+         StringSetDestroy(filament->items);
+         free(filament);
++        return;
+     }
+ 
+     DBHandle *db;

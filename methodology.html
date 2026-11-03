@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI/ML Security Assessment & Red-Team Methodology — Gavin Branaa</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+<style>
+ :root{--bg:#fbfbfd;--fg:#1a1a1f;--muted:#5a5c66;--line:#e4e4ea;--card:#fff;--accent:#1a4fb0;--code:#0b5}
+ @media(prefers-color-scheme:dark){:root{--bg:#111318;--fg:#e9e9ef;--muted:#9aa0ac;--line:#262a33;--card:#181a20;--accent:#7aa2ff}}
+ *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+ .wrap{max-width:820px;margin:0 auto;padding:40px 22px 72px}
+ h1{font-size:26px;line-height:1.2;margin:0 0 6px;letter-spacing:-.3px} h2{font-size:17px;text-transform:uppercase;letter-spacing:.7px;color:var(--accent);border-bottom:1.5px solid var(--line);padding-bottom:5px;margin:34px 0 12px}
+ .sub{color:var(--muted);font-size:14.5px;margin:0 0 4px} .sub a{color:var(--accent);text-decoration:none}
+ .lead{font-size:15.5px;color:var(--fg);margin:18px 0}
+ .principle{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:10px;padding:14px 18px;margin:20px 0;font-size:15px}
+ p{margin:10px 0} ul{margin:8px 0;padding-left:20px} li{margin:5px 0}
+ .phase{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:13px 16px;margin:10px 0}
+ .phase b{color:var(--accent)}
+ table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px} th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top} th{background:color-mix(in srgb,var(--accent) 9%,transparent);color:var(--fg);font-weight:700}
+ code{font:13px "SF Mono",Consolas,monospace;background:color-mix(in srgb,var(--accent) 10%,transparent);padding:1px 5px;border-radius:4px}
+ .tier{font:13px "SF Mono",Consolas,monospace} .foot{color:var(--muted);font-size:13px;margin-top:34px;border-top:1px solid var(--line);padding-top:14px}
+ .back{display:inline-block;margin-bottom:18px;color:var(--accent);text-decoration:none;font-size:14px}
+</style></head><body><div class="wrap">
+<a class="back" href="./">← portfolio</a>
+<h1>AI/ML Security Assessment &amp; Red-Team Methodology</h1>
+<p class="sub">Gavin Branaa · Independent Security Researcher · <a href="https://github.com/tritsystem">github.com/tritsystem</a> · <a href="https://tritsystem.github.io/sec-portfolio/">portfolio</a></p>
+
+<p class="lead">A repeatable engagement process for finding, proving, and reporting real security issues in AI/ML systems — from the model to the infrastructure it runs on. The discipline below is the same one behind a published CVE, 35 merged fixes across 16 projects, and tooling that separates a scanner's noise from a verified finding.</p>
+
+<div class="principle"><b>Core principle.</b> A tool signal is a lead, not a finding. Nothing reaches the client until it is reproduced on the real system, root-caused, and shown with a working proof of concept. Reporting a false positive costs more than reporting nothing — so the method is built to kill my own leads before they ever leave my desk.</div>
+
+<h2>The engagement — six phases</h2>
+
+<div class="phase"><b>1 · Scope &amp; threat model.</b> What are we protecting, from whom, and what is the worst realistic outcome? Define the actors (anonymous → authenticated tenant → admin → insider), the assets (models, data, credentials, compute), and the blast radius. Read the target's own security policy first — if it disclaims a class, that class is hardening at most.</div>
+
+<div class="phase"><b>2 · Map the architecture &amp; trust boundaries.</b> Draw the data and control flow end to end: <em>user → app → model → tools → data stores → infra</em>. Every arrow that crosses a trust boundary is an attack surface. A diagram with the boundaries marked is the first deliverable — it makes the rest of the engagement legible.</div>
+
+<div class="phase"><b>3 · Enumerate attack surface, layer by layer.</b>
+<table><thead><tr><th>Layer</th><th>What goes wrong</th></tr></thead><tbody>
+<tr><td><b>Model</b></td><td>prompt injection (direct &amp; indirect), jailbreaks, system-prompt / training-data extraction, unsafe output handling</td></tr>
+<tr><td><b>Agent / tools</b></td><td>tool abuse; the <em>lethal trifecta</em> — private-data access + untrusted-content ingestion + an exfiltration path in one agent</td></tr>
+<tr><td><b>Application</b></td><td>broken access control / IDOR, cross-tenant isolation gaps, missing authorization on a sibling endpoint</td></tr>
+<tr><td><b>Serving / infra</b></td><td>unauthenticated code-exec endpoints (job-submit = RCE), SSRF to cloud metadata, unsafe deserialization</td></tr>
+<tr><td><b>Supply chain</b></td><td>malicious models, <code>pickle</code>/<code>torch.load</code> RCE, checkpoint metadata driving an out-of-bounds kernel access</td></tr>
+</tbody></table></div>
+
+<div class="phase"><b>4 · Rank the targets.</b> Score each candidate by <b>exposure × ease × attacker-gain × blast-radius</b>. Spend the budget where the payoff is highest, and write the ranking down so the client sees the reasoning, not just the results.</div>
+
+<div class="phase"><b>5 · Find → reproduce → verify (the evidence ladder).</b> Every candidate is graded and never rounded up:
+<ul>
+<li><span class="tier"><b>T0</b></span> static/tool hit · <span class="tier"><b>T1</b></span> read by hand · <span class="tier"><b>T2</b></span> run in a harness — <em>all still just leads.</em></li>
+<li><span class="tier"><b>T3</b></span> reproduced through the system's real entry point — <em>the minimum bar to call something a finding.</em></li>
+<li><span class="tier"><b>T4</b></span> T3 + a verified fix (red→green) · <span class="tier"><b>T5</b></span> + variant analysis across siblings.</li>
+</ul>
+Before anything is called real: scope-check the policy, <b>trace to the actual enforcement layer</b> (the guard often lives in a wrapper or middleware, not the handler), grep the project's own tests, and dedup against prior reports.</div>
+
+<div class="phase"><b>6 · Report — proof, impact, remediation.</b> Each finding states the exact file/line root cause, a reproducing PoC, the honest impact (what an attacker actually gains, and the preconditions), and a fix that closes the <em>class</em>, not just the instance. Negatives are reported as rigorously as positives. Severity is never inflated.</div>
+
+<h2>Why this method is trustworthy</h2>
+<ul>
+<li>It has produced real, independently-confirmed results — a CVE, merged fixes in C, Go, and Python, and cross-tenant authorization fixes adopted upstream.</li>
+<li>It is <b>tooling-backed</b>: a 40+-detector scanner with a learned gate that distinguishes a signal from a validated finding, plus metamorphic and sanitizer-driven verification — so breadth is fast and the bar stays high.</li>
+<li>It is <b>honest by construction</b>: in a climate where AI-generated security reports are flooding maintainers, the value is not volume — it is a report a defender can act on without re-doing the work.</li>
+</ul>
+
+<p class="foot">Engagement artifacts: a trust-boundary diagram, a ranked attack-surface map, a findings report (proof + remediation per issue), and a remediation-verification pass on request.</p>
+</div></body></html>

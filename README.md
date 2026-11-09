@@ -1,7 +1,7 @@
 # Security & correctness track record
 
 Live: **https://tritsystem.github.io/sec-portfolio/**
-Deep-dive (all 35 merges, real diffs): **https://tritsystem.github.io/sec-portfolio/deep-dive.html**
+Deep-dive (the 35 classified merges, real diffs): **https://tritsystem.github.io/sec-portfolio/deep-dive.html**
 
 Every claim links to a public GitHub artifact. Contributions counted only when merged; filed/open work labelled.
 
@@ -19,6 +19,10 @@ python gen_deepdive.py     # render before/after + rubric + walkthrough for all 
 
 - `.github/workflows/regenerate.yml` runs this on a weekly timer and on demand; new PRs appear as `UNCLASSIFIED`
   until a human adds their ~4-line entry to `classify.py` + `annotate.py`.
+- **Pending classification:** as of 2026-11-09 the merged count is 38; three merges from November
+  (SpikeInterface #4916 and #4918, probeinterface #476 — all `eval`/`exec` → `ast` fixes) do not yet
+  have `classify.py` / `annotate.py` entries, so the generated deep-dive still renders 35. The index
+  page's headline count is 38.
 - `bench/size_sweep.py` is the pre-registered model-size benchmark harness: it measures each step's accuracy
   against a human-labelled held-out set, or reports nothing. It fabricates no numbers, and marks the steps that
   lack an exact checker as *not* safe to automate unattended.

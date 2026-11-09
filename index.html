@@ -35,13 +35,14 @@
 <body>
 <main>
   <h1>Finding real bugs, and proving they're real</h1>
-  <p class="lede">A security &amp; correctness track record built on verifiable evidence — a published CVE, merged fixes, a stated evidence bar, and honest negatives.</p>
+  <p class="lede">A security &amp; correctness track record built on verifiable evidence — two published CVEs, merged fixes, a stated evidence bar, and honest negatives.</p>
   <p class="muted">GitHub: <a href="https://github.com/tritsystem">@tritsystem</a> · every claim below links to the public artifact.</p>
 
   <div class="grid">
-    <div class="stat"><b><a href="https://github.com/advisories/GHSA-gvp8-978c-rx2q">CVE-2026-103001</a></b><span>published CVE in PyJWT · CVSS 6.5</span></div>
-    <div class="stat"><b>35</b><span>PRs merged into others' projects</span></div>
-    <div class="stat"><b>16</b><span>distinct open-source projects</span></div>
+    <div class="stat"><b><a href="https://github.com/h5io/h5io/security/advisories/GHSA-vwvw-f6v4-w737">CVE-2026-120499</a></b><span>h5io code execution · High · CVSS 7.8 · credited finder</span></div>
+    <div class="stat"><b><a href="https://github.com/advisories/GHSA-gvp8-978c-rx2q">CVE-2026-103001</a></b><span>PyJWT claim bypass · CVSS 6.5 · credited reporter</span></div>
+    <div class="stat"><b>38</b><span>PRs merged into others' projects</span></div>
+    <div class="stat"><b>18</b><span>distinct open-source projects</span></div>
   </div>
   <p class="muted" style="font-size:13px">Counts are live-verifiable: <code>gh search prs --author tritsystem --merged</code>. Open/filed work is labelled as such below — only merged PRs are counted as contributions.</p>
 
@@ -72,6 +73,12 @@
   <p>Two rules sit underneath it: <b>validate the instrument first</b> (a sanitizer or oracle must fire on a planted bug and stay silent on clean code before I trust its silence), and <b>match the tool to the bug class</b> (AddressSanitizer misses an in-buffer uninitialized read; MemorySanitizer catches it).</p>
 
   <h2>Selected work, told in tier language</h2>
+
+  <div class="card" style="border-color:var(--accent)">
+    <h3>Code execution by opening a crafted HDF5 file <span class="tier">CVE-2026-120499 · High · published</span></h3>
+    <div class="meta"><a href="https://github.com/h5io/h5io/security/advisories/GHSA-vwvw-f6v4-w737">GHSA-vwvw-f6v4-w737</a> · CWE-95 + CWE-502 · credited finder, with <a href="https://github.com/r3vpwnx">r3vpwnx</a> · h5io, and everything built on it (MNE-Python)</div>
+    <p><code>h5io.read_hdf5()</code> rebuilt Python objects out of fields in the file it was reading: a node titled <code>timezone</code> went through <code>eval</code> with builtins reachable, a <code>class</code> node named a module that was then imported, and pandas nodes were unpickled on read. All three are reached through the public API with default arguments, so "open this <code>.h5</code>" meant "run this code" — including through documented MNE-Python readers. The class the whole portfolio hunts for: no crash, no warning, attacker-authored input reaching an interpreter. Fixed in 0.2.6 by parsing timezones with a strict AST parser and adding <code>allow_pickle=False</code>.</p>
+  </div>
 
   <div class="card" style="border-color:var(--accent)">
     <h3>Silent claim-verification bypass in PyJWT <span class="tier">CVE-2026-103001 · CVSS 6.5 · published</span></h3>
